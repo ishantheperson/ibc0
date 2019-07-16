@@ -1,0 +1,9 @@
+i = 0;
+j = i + 10;
+
+if (i < j) {
+  print i;
+}
+else {
+  print j;
+}
