@@ -85,101 +85,93 @@ codegen p = let (bytecode, pools) = runState (codegenStatement p) emptyState
                         mainBytes, 
                         footer] 
 
--- Requires rank N types
-updatePool :: Eq a => a -> Lens' b [a] -> (Int -> c) -> State b c 
-updatePool elem lens f = do pool <- view lens <$> get 
-                            case elemIndex elem pool of 
-                              Just index -> return $ f index 
-                              Nothing -> do modify (over lens (++[elem]))
-                                            return . f $ length pool 
-
 type CodegenBuilder a = a -> State CodegenState [Bytecode]
 
 codegenStatement :: CodegenBuilder Statement 
-codegenStatement = 
-  \case Print (ArithExpr e) -> do expressionCode <- codegenArithExpression e 
-                                  return (expressionCode ++ printIntBytecode)
+codegenStatement = \case 
+  Print (ArithExpr e) -> do expressionCode <- codegenArithExpression e 
+                            return (expressionCode ++ printIntBytecode)
 
-        Print (StringLiteral s) -> do instructions <- codegenString s 
-                                      return (instructions ++ printBytecode)
+  Print (StringLiteral s) -> do stringLoadInstructions <- codegenString s 
+                                return (stringLoadInstructions ++ printBytecode)
 
-        Assign varName (ArithExpr e) -> do expressionCode <- codegenArithExpression e 
-                                           instruction <- updatePool varName variables (pure . VStore) 
-                                           return (expressionCode ++ instruction)
+  Assign varName (ArithExpr e) -> do expressionCode <- codegenArithExpression e 
+                                     instruction <- updatePool varName variables (pure . VStore) 
+                                     return (expressionCode ++ instruction)
 
-        If test ifBody elseBody -> do testCode <- codegenBoolExpression test 
-                                      ifBodyCode <- codegenStatement ifBody 
-                                      elseBodyCode <- codegenStatement elseBody 
-                                      return $ testCode ++ [Bipush 1, IfCmpEq 6, 
-                                                            Goto (3 + bytecodeLength ifBodyCode)] 
-                                                        ++ ifBodyCode 
-                                                        ++ [Goto (3 + bytecodeLength elseBodyCode)]
-                                                        ++ elseBodyCode 
-                                                        
-        While test body -> do testCode <- codegenBoolExpression test 
-                              bodyCode <- codegenStatement body 
+  If test ifBody elseBody -> do testCode <- codegenBoolExpression test 
+                                ifBodyCode <- codegenStatement ifBody 
+                                elseBodyCode <- codegenStatement elseBody 
+                                return $ testCode ++ [Bipush 1, IfCmpEq 6, 
+                                                      Goto (3 + bytecodeLength ifBodyCode)] 
+                                                  ++ ifBodyCode 
+                                                  ++ [Goto (3 + bytecodeLength elseBodyCode)]
+                                                  ++ elseBodyCode 
+                                                  
+  While test body -> do testCode <- codegenBoolExpression test 
+                        bodyCode <- codegenStatement body 
 
-                              let code = [Comment "Loop test"] ++ testCode 
-                                                               ++ [Bipush 1, IfCmpEq 6, 
-                                                                   Goto (6 + bytecodeLength bodyCode), 
-                                                                   Comment "Loop body"]
-                                                               ++ bodyCode
-                              return $ code ++ [Goto $ negate (bytecodeLength code), Comment "Loop end"]
+                        let code = [Comment "Loop test"] ++ testCode 
+                                                         ++ [Bipush 1, IfCmpEq 6, 
+                                                             Goto (6 + bytecodeLength bodyCode), 
+                                                             Comment "Loop body"]
+                                                         ++ bodyCode
+                        return $ code ++ [Goto $ negate (bytecodeLength code), Comment "Loop end"]
 
-        Sequence statements -> concat <$> traverse codegenStatement statements 
-        unsupported -> error $ "Unsupported operation (for now): " ++ show unsupported
+  Sequence statements -> concat <$> traverse codegenStatement statements 
+  unsupported -> error $ "Unsupported operation (for now): " ++ show unsupported
 
   where printIntBytecode = [InvokeNative 0] ++ printBytecode -- string_fromint
         printBytecode = [InvokeNative 1, Pop] 
 
 codegenArithExpression :: CodegenBuilder ArithExpr
-codegenArithExpression = 
-  \case Variable v -> do variablesEnv <- view variables <$> get 
-                         return [VLoad $ fromMaybe (error $ "unknown variable: " ++ v) (elemIndex v variablesEnv)]
+codegenArithExpression = \case 
+  Variable v -> do variablesEnv <- view variables <$> get 
+                   return [VLoad $ fromMaybe (error $ "unknown variable: " ++ v) (elemIndex v variablesEnv)]
 
-        ArithBinary op lhs rhs -> do let opcode = case op of Add -> IAdd 
-                                                             Subtract -> ISub 
-                                                             Multiply -> IMul 
-                                                             Divide -> IDiv 
-                                                             Mod -> IRem
+  ArithBinary op lhs rhs -> do let opcode = case op of Add -> IAdd 
+                                                       Subtract -> ISub 
+                                                       Multiply -> IMul 
+                                                       Divide -> IDiv 
+                                                       Mod -> IRem
 
-                                     lhsCode <- codegenArithExpression lhs 
-                                     rhsCode <- codegenArithExpression rhs 
+                               lhsCode <- codegenArithExpression lhs 
+                               rhsCode <- codegenArithExpression rhs 
 
-                                     return $ lhsCode ++ rhsCode ++ [opcode]
+                               return $ lhsCode ++ rhsCode ++ [opcode]
 
-        IntConstant i -> if -128 <= i && i < 127 then 
-                           return [Bipush $ fromInteger i] 
-                         else updatePool i intPool (pure . Ildc)
-                           
-        Negate exp -> do expCode <- codegenArithExpression exp 
-                         return (expCode ++ [Bipush (-1), IMul])
+  IntConstant i -> if -128 <= i && i < 127 then 
+                     return [Bipush $ fromInteger i] 
+                   else updatePool i intPool (pure . Ildc)
+                     
+  Negate exp -> do expCode <- codegenArithExpression exp 
+                   return (expCode ++ [Bipush (-1), IMul])
 
 -- Generates code which pushes 0 (false) or 1 (true) to the stack 
 codegenBoolExpression :: CodegenBuilder BoolExpr 
-codegenBoolExpression = 
-  \case BoolConst b -> return $ case b of { True -> [Bipush 1]; False -> [Bipush 0]}
-        -- Simulate (!x) with (1 - x). Alternative could xor with -1 
-        Not e -> do expCode <- codegenBoolExpression e 
-                    return $ [Bipush 1] ++ expCode ++ [ISub]
-
-        BoolBinary op lhs rhs -> do let opcode = case op of And -> IAnd 
-                                                            Or -> IOr 
-                                     -- TODO: short circuit evaluation 
-                                    lhsCode <- codegenBoolExpression lhs 
-                                    rhsCode <- codegenBoolExpression rhs 
-                                    return $ lhsCode ++ rhsCode ++ [opcode]
-
-        CmpBinary op lhs rhs -> do let opcode = case op of Equal -> IfCmpEq 
-                                                           NotEqual -> IfCmpNeq
-                                                           Less -> IfCmpLt 
-                                                           Greater -> IfCmpGt 
-                                                           other -> error $ "Not supported yet: " ++ show other 
-                                                            
-                                   lhsCode <- codegenArithExpression lhs 
-                                   rhsCode <- codegenArithExpression rhs 
-                                   return $ lhsCode ++ rhsCode ++ [opcode 8, Bipush 0, Goto 5, Bipush 1]
-
+codegenBoolExpression = \case 
+  BoolConst b -> return $ case b of { True -> [Bipush 1]; False -> [Bipush 0]}
+  -- Simulate (!x) with (1 - x). Alternative could xor with -1 
+  Not e -> do expCode <- codegenBoolExpression e 
+              return $ [Bipush 1] ++ expCode ++ [ISub]
+  
+  BoolBinary op lhs rhs -> do let opcode = case op of And -> IAnd 
+                                                      Or -> IOr 
+                               -- TODO: short circuit evaluation 
+                              lhsCode <- codegenBoolExpression lhs 
+                              rhsCode <- codegenBoolExpression rhs 
+                              return $ lhsCode ++ rhsCode ++ [opcode]
+  
+  CmpBinary op lhs rhs -> do let opcode = case op of Equal -> IfCmpEq 
+                                                     NotEqual -> IfCmpNeq
+                                                     Less -> IfCmpLt 
+                                                     Greater -> IfCmpGt 
+                                                     other -> error $ "Not supported yet: " ++ show other 
+                                                      
+                             lhsCode <- codegenArithExpression lhs 
+                             rhsCode <- codegenArithExpression rhs 
+                             return $ lhsCode ++ rhsCode ++ [opcode 8, Bipush 0, Goto 5, Bipush 1]
+  
 codegenString :: CodegenBuilder String 
 codegenString string = do pool <- view stringPool <$> get 
                           let pos = length pool
@@ -201,7 +193,7 @@ codegenStringPool stringPool = let lengthBytes = ushortToHex $ length stringPool
 codegenMain :: VariableEnv -> [Bytecode] -> String 
 codegenMain vars program = unlines ["00 00 # (main) num. args", 
                                     ushortToHex (length vars) ++ " # num. vars", 
-                                    ushortToHex (bytecodeLength program') ++ " # code length",
+                                    ushortToHex (bytecodeLength programWithReturn) ++ " # code length",
                                     concatMap bytecodeMap programWithReturn]
   where programWithReturn = program ++ [Bipush 0, Return]
 
@@ -243,6 +235,15 @@ showBytecode = \case
 bytecodeLength :: [Bytecode] -> Int 
 bytecodeLength = sum . map bytecodeArity
 
+-- Requires rank N types
+updatePool :: Eq a => a -> Lens' b [a] -> (Int -> c) -> State b c 
+updatePool elem lens f = do pool <- view lens <$> get 
+                            case elemIndex elem pool of 
+                              Just index -> return $ f index 
+                              Nothing -> do modify (over lens (++[elem]))
+                                            return . f $ length pool 
+
+
 bytecodeArity :: Bytecode -> Int 
 bytecodeArity = \case 
   Ildc _ -> 3 
@@ -264,6 +265,12 @@ bytecodeArity = \case
 
   _ -> 1 -- most instructions do not take operands 
 
+header, footer :: String 
+header = "C0 C0 FF EE 00 13 # header\n" 
+footer = unlines ["00 02 # native pool", 
+                  "00 01 00 63 # string_fromint", 
+                  "00 01 00 06 # print"]  -- 00 01 00 0A is println
+
 sbyteToHex, ubyteToHex, ushortToHex, sshortToHex, intToHex :: Int -> String 
 sbyteToHex i = printf "%02X" (if i < 0 then i + (2^8) else i)
 ubyteToHex i = printf "%02X" i 
@@ -280,9 +287,11 @@ addSpaces :: String -> String
 addSpaces xs = if length xs <= 2 then xs 
                else take 2 xs ++ " " ++ addSpaces (drop 2 xs)
 
-header, footer :: String 
-header = "C0 C0 FF EE 00 13 # header\n" 
-footer = unlines ["00 02 # native pool", 
-                  "00 01 00 63 # string_fromint", 
-                  "00 01 00 06 # print"]  -- 00 01 00 0A is println
-
+-- alternate implementation
+{-
+addSpaces = \case 
+  [] -> []
+  [a] -> [a]
+  [a, b] -> [a, b]
+  a:b:xs -> a:b:' ':(addSpaces xs)
+-}

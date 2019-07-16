@@ -75,28 +75,27 @@ getStringExpr _ (StringLiteral s) = Right s
 getStringExpr _ _ = Left WrongType 
 
 evalStatement :: Environment -> Statement -> ExceptT RuntimeError IO Environment 
-evalStatement env statement = 
-  case statement of 
-    Sequence statements -> evalSequence env statements 
-    Assign name value -> do newVal <- liftEither $ getArithExpr env value 
-                            return $ Map.insert name newVal env 
-    
-    If cond ifBranch elseBranch -> do test <- liftEither $ evalBoolExpr env cond 
-                                      evalStatement env (if test then ifBranch else elseBranch)
+evalStatement env = \case  
+  Sequence statements -> evalSequence env statements 
+  Assign name value -> do newVal <- liftEither $ getArithExpr env value 
+                          return $ Map.insert name newVal env 
+  
+  If cond ifBranch elseBranch -> do test <- liftEither $ evalBoolExpr env cond 
+                                    evalStatement env (if test then ifBranch else elseBranch)
 
-    While cond loopBody -> do test <- liftEither $ evalBoolExpr env cond 
-                              if test then do 
-                                newEnv <- evalStatement env loopBody 
-                                evalStatement newEnv statement 
-                              else 
-                                return env 
-    
-    Print expr -> do val <- case expr of 
-                              ArithExpr aexp -> liftEither . fmap show $ evalArithExpr env aexp 
-                              BoolExpr bexp -> liftEither . fmap show $ evalBoolExpr env bexp 
-                              StringLiteral s -> pure s 
-                     liftIO $ putStrLn val 
-                     return env
+  While cond loopBody -> do test <- liftEither $ evalBoolExpr env cond 
+                            if test then do 
+                              newEnv <- evalStatement env loopBody 
+                              evalStatement newEnv statement 
+                            else 
+                              return env 
+  
+  Print expr -> do val <- case expr of 
+                            ArithExpr aexp -> liftEither . fmap show $ evalArithExpr env aexp 
+                            BoolExpr bexp -> liftEither . fmap show $ evalBoolExpr env bexp 
+                            StringLiteral s -> pure s 
+                   liftIO $ putStrLn val 
+                   return env
 
 evalSequence :: Environment -> [Statement] -> ExceptT RuntimeError IO Environment 
 evalSequence env statements = 
