@@ -202,8 +202,8 @@ codegenMain :: VariableEnv -> [Bytecode] -> String
 codegenMain vars program = unlines ["00 00 # (main) num. args", 
                                     ushortToHex (length vars) ++ " # num. vars", 
                                     ushortToHex (bytecodeLength program') ++ " # code length",
-                                    concatMap bytecodeMap program']
-                             where program' = program ++ [Bipush 0, Return]
+                                    concatMap bytecodeMap programWithReturn]
+  where programWithReturn = program ++ [Bipush 0, Return]
 
 bytecodeMap :: Bytecode -> String 
 bytecodeMap b = (\case 
