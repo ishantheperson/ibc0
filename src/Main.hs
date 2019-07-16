@@ -8,6 +8,7 @@ import Data.Either (lefts)
 
 import System.Environment (getArgs)
 import System.Console.GetOpt 
+import System.Exit (exitSuccess, exitFailure)
 
 data Flag = GenBytecode | Help | RunRepl deriving (Show, Eq) 
 
@@ -17,20 +18,26 @@ main = do
 
   case getOpt Permute options args of 
     (opts, files, []) -> 
-      if | Help `elem` opts -> putStrLn "Simple BC0 compiler" >> printHelp 
+      if | Help `elem` opts -> printHelp "Simple BC0 compiler" 
          | RunRepl `elem` opts -> runRepl 
-         | length files == 0 -> printError "Error: missing filenames"
+
+         | length files == 0 -> do printHelp "Error: missing filenames"
+                                   exitFailure
 
          | GenBytecode `elem` opts -> mapM_ compileFile files 
+
          | otherwise -> do programResults <- mapM runFile files
                            let runtimeErrors = lefts programResults
-                           mapM_ print runtimeErrors 
+                           
+                           if null runtimeErrors then 
+                             exitSuccess
+                           else do 
+                             mapM_ print runtimeErrors 
+                             exitFailure
 
-    (_, _, errors) -> printError $ concat errors
+    (_, _, errors) -> printHelp $ concat errors
 
-  where printHelp = putStr $ usageInfo "usage: ./simple (flags) (filenames). By Ishan Bhargava" options 
-        printError e = putStrLn e >> printHelp 
-
+  where printHelp e = putStrLn e >> putStr $ usageInfo "usage: ./simple (flags) (filenames). By Ishan Bhargava" options 
         runFile fileName = readFile fileName >>= runProgram . getProgram 
 
         options = [ Option ['h', '?'] ["help"] (NoArg Help) "print this help message",
