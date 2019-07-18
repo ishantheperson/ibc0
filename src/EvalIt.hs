@@ -75,7 +75,7 @@ getStringExpr _ (StringLiteral s) = Right s
 getStringExpr _ _ = Left WrongType 
 
 evalStatement :: Environment -> Statement -> ExceptT RuntimeError IO Environment 
-evalStatement env = \case  
+evalStatement env statement = case statement of  
   Sequence statements -> evalSequence env statements 
   Assign name value -> do newVal <- liftEither $ getArithExpr env value 
                           return $ Map.insert name newVal env 

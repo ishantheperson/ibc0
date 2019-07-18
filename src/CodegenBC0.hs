@@ -1,5 +1,6 @@
-{-# LANGUAGE LambdaCase, TemplateHaskell, RankNTypes #-} 
-module CodegenBC0 (compileFile, getBytecode, codegen) where 
+{-# LANGUAGE LambdaCase, TemplateHaskell, Rank2Types #-} 
+module CodegenBC0 (compileFile,  
+                   getBytecode, codegen) where 
 
 import ParseIt
 
@@ -32,11 +33,6 @@ import System.FilePath (splitExtension)
    2 bytes - native pool count 
    native pool -}
 
-type IntPool = [Integer]  
-type VariableEnv = [String] -- use elemIndex to get positions
-type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
-                           -- e.g. ["01", "23", "45", "56", "00"]
-
 data Bytecode = IAdd | ISub | IMul | IDiv | IRem
               | IAnd | IOr 
 
@@ -55,6 +51,11 @@ data Bytecode = IAdd | ISub | IMul | IDiv | IRem
               | Comment String 
                 deriving Show 
 
+type IntPool = [Integer]  
+type VariableEnv = [String] -- use elemIndex to get positions
+type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
+                           -- e.g. ["01", "23", "45", "56", "00"]
+
 -- | Represents internal code generator state
 data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
 makeLenses ''CodegenState 
@@ -64,8 +65,9 @@ emptyState = CodegenState [] [] []
 -- | The output file is the same as the input file name, except 
 -- | with .bc0 
 compileFile :: FilePath -> IO () 
-compileFile file = let outputName = (fst $ splitExtension file) ++ ".bc0" 
-                   in getBytecode <$> readFile file >>= writeFile outputName 
+compileFile file = 
+  let outputFile = (fst $ splitExtension file) ++ ".bc0"
+  in getBytecode <$> readFile file >>= writeFile outputFile 
 
 -- | Parses input string and generates bytecode
 getBytecode :: String -> String 
@@ -140,9 +142,9 @@ codegenArithExpression = \case
 
                                return $ lhsCode ++ rhsCode ++ [opcode]
 
-  IntConstant i -> if -128 <= i && i < 127 then 
-                     return [Bipush $ fromInteger i] 
-                   else updatePool i intPool (pure . Ildc)
+  IntConstant i -> if -128 <= i && i < 127 
+                     then return [Bipush $ fromInteger i] 
+                     else updatePool i intPool (pure . Ildc)
                      
   Negate exp -> do expCode <- codegenArithExpression exp 
                    return (expCode ++ [Bipush (-1), IMul])
@@ -235,7 +237,7 @@ showBytecode = \case
 bytecodeLength :: [Bytecode] -> Int 
 bytecodeLength = sum . map bytecodeArity
 
--- Requires rank N types
+-- Requires rank 2 types for Lens'  
 updatePool :: Eq a => a -> Lens' b [a] -> (Int -> c) -> State b c 
 updatePool elem lens f = do pool <- view lens <$> get 
                             case elemIndex elem pool of 
@@ -284,14 +286,8 @@ intToHex i = addSpaces (printf "%08X" (if i < 0 then i + (2^32) else i))
 -- adds spaces every 2 characters 
 -- e.g. 1234 -> 12 34 
 addSpaces :: String -> String 
-addSpaces xs = if length xs <= 2 then xs 
-               else take 2 xs ++ " " ++ addSpaces (drop 2 xs)
-
--- alternate implementation
-{-
 addSpaces = \case 
   [] -> []
   [a] -> [a]
   [a, b] -> [a, b]
   a:b:xs -> a:b:' ':(addSpaces xs)
--}

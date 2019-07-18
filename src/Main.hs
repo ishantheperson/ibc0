@@ -37,7 +37,7 @@ main = do
 
     (_, _, errors) -> printHelp $ concat errors
 
-  where printHelp e = putStrLn e >> putStr $ usageInfo "usage: ./simple (flags) (filenames). By Ishan Bhargava" options 
+  where printHelp e = putStrLn e >> putStr (usageInfo "usage: ./simple (flags) (filenames). By Ishan Bhargava" options)
         runFile fileName = readFile fileName >>= runProgram . getProgram 
 
         options = [ Option ['h', '?'] ["help"] (NoArg Help) "print this help message",

@@ -144,7 +144,7 @@ parseAssign = do
 
 parsePrint = do 
   reserved "print" 
-  expr <- parseExpression -- TODO any expr
+  expr <- parseExpression 
   semicolon 
   return $ Print expr 
 
