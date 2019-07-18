@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
+{-# LANGUAGE BlockArguments #-}
 module ParseIt (BoolExpr(..), BoolOp(..), CmpOp(..), 
                 ArithExpr(..), ArithOp(..), 
                 Statement(..), Expression(..),
@@ -30,6 +31,8 @@ data Statement = Sequence [Statement]
                | If BoolExpr Statement Statement 
                | While BoolExpr Statement 
                | Print Expression
+               | FunctionDecl String [String] Statement
+               | FunctionReturn Expression  
                    deriving Show 
 
 data Expression = BoolExpr BoolExpr | ArithExpr ArithExpr | StringLiteral String 
@@ -53,7 +56,7 @@ reservedWords = [ "if", "else", "while",
                   "print" ]
 
 reservedOps = [ "+", "-", "*", "/", "==", "!=", "!", "&&", "||",
-                "+=", "*=", "-=", "/=", "%=", "=" ]
+                "+=", "*=", "-=", "/=", "%=", "=", "=>" ]
 
 languageDef = emptyDef { 
   Tok.commentStart = "/*",
@@ -77,6 +80,7 @@ integer = Tok.integer lexer
 semicolon = Tok.semi lexer 
 whitespace = Tok.whiteSpace lexer
 stringLiteral = Tok.stringLiteral lexer 
+commaSep = Tok.commaSep lexer 
 
 parseProgram :: Parser Statement 
 parseProgram = do 
@@ -95,6 +99,7 @@ parseSequence = do
 parseStatement :: Parser Statement 
 parseStatement =     parseIf 
                  <|> parseWhile
+                 <|> parseFunction
                  <|> parseAssign 
                  <|> parsePrint 
                  <?> "statement"
@@ -121,6 +126,21 @@ parseWhile = do
 
   return $ While condition loopBody 
 
+parseFunction = do 
+  (name, args) <- try do 
+    name <- identifier 
+    args <- parens $ commaSep identifier
+    return (name, args) 
+
+  body <- parseSingleStatementFunction <|> parseMultiStatementFunction 
+  return $ FunctionDecl name args body 
+
+  where parseSingleStatementFunction = do 
+          reservedOp "=>"
+          FunctionReturn <$> parseExpression <* reservedOp ";"
+
+        parseMultiStatementFunction = braces $ parseSequence 
+
 parseAssign = do 
   name <- identifier 
   op <- choice (map (\s -> reservedOp s >> return s) ["=", "+=", "-=", "*=", "/="])
@@ -136,17 +156,15 @@ parseAssign = do
                                  '/' -> Divide 
                                  _ -> error "(supposedly impossible) parser error"
                           expr' = 
-                               case expr of 
-                                 ArithExpr e -> e 
+                               case expr of -- FIXME: Can be avoided by creating new 
+                                 ArithExpr e -> e  -- AST node type for compound assignment
                                  _ -> error "expected ArithExpr"
                       in Assign name (ArithExpr $ ArithBinary operation (Variable name) expr') 
              _ -> error "(supposedly impossible) parser error" 
 
 parsePrint = do 
   reserved "print" 
-  expr <- parseExpression 
-  semicolon 
-  return $ Print expr 
+  Print <$> parseExpression <* semicolon
 
 parseArithExpr :: Parser ArithExpr 
 parseArithExpr = buildExpressionParser arithOperators arithTerm 
