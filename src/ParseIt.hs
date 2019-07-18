@@ -36,6 +36,7 @@ data Statement = Sequence [Statement]
                    deriving Show 
 
 data Expression = BoolExpr BoolExpr | ArithExpr ArithExpr | StringLiteral String 
+                | FunctionCall String [Expression] 
                     deriving Show
 
 instance Show ArithExpr where 
@@ -99,12 +100,13 @@ parseSequence = do
 parseStatement :: Parser Statement 
 parseStatement =     parseIf 
                  <|> parseWhile
-                 <|> parseFunction
+                 <|> parseFunctionDecl
                  <|> parseAssign 
                  <|> parsePrint 
-                 <?> "statement"
+                 <?> "statement/declaration"
 
-parseExpression =    (try $ ArithExpr <$> parseArithExpr) 
+parseExpression =    parseFunctionCall
+                 <|> (try $ ArithExpr <$> parseArithExpr) 
                  <|> (try $ BoolExpr <$> parseBoolExpr)
                  <|> (StringLiteral <$> stringLiteral)
                  <?> "expression"
@@ -114,8 +116,7 @@ parseIf = do
   condition <- parens parseBoolExpr
   
   ifBody <- braces parseSequence 
-  elseBody <- option (Sequence []) (do reserved "else"
-                                       braces parseSequence) 
+  elseBody <- option (Sequence []) (reserved "else" *> braces parseSequence) 
 
   return $ If condition ifBody elseBody
 
@@ -126,7 +127,7 @@ parseWhile = do
 
   return $ While condition loopBody 
 
-parseFunction = do 
+parseFunctionDecl = do 
   (name, args) <- try do 
     name <- identifier 
     args <- parens $ commaSep identifier
@@ -140,6 +141,14 @@ parseFunction = do
           FunctionReturn <$> parseExpression <* reservedOp ";"
 
         parseMultiStatementFunction = braces $ parseSequence 
+
+parseFunctionCall = do 
+  (name, args) <- try do 
+    name <- identifier 
+    args <- parens $ commaSep parseExpression 
+    return (name, args)
+
+  return $ FunctionCall name args 
 
 parseAssign = do 
   name <- identifier 
@@ -217,25 +226,3 @@ getProgram str =
   case maybeGetProgram str of 
     Left e -> error $ show e 
     Right program -> program 
-
-{-
-printAST :: Statement -> IO () 
-printAST = printAST' 0  
-  where putTabs :: Int -> IO () 
-        putTabs = putStr . flip replicate '\t'
-
-        printAST' :: Int -> Statement -> IO () 
-        printAST' d e = do 
-          putTabs d 
-
-          case e of 
-            Sequence l -> do 
-              putStrLn "Sequence: "
-              mapM_ (printAST' (d + 1)) l
-
-            Assign name var -> do 
-              putStrLn $ "Assign (" ++ name ++ ") to TODO "
--}
-
-
-
