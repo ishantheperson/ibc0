@@ -1,6 +1,8 @@
 # ibc0
 
 A work-in-progress compiler for a simple language which targets BC0.
+See the (refactoring branch)[https://github.com/ishantheperson/ibc0/tree/newexp]
+for development of the next features
 
 ### Dependencies
 
