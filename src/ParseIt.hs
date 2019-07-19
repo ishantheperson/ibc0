@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
-{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE BlockArguments, LambdaCase #-}
 module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..),
                 maybeGetProgram, getProgram) where 
 
@@ -7,6 +7,9 @@ import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr 
 import Text.ParserCombinators.Parsec.Language 
 import qualified Text.ParserCombinators.Parsec.Token as Tok 
+
+import Data.Either (either)
+import Control.Arrow ((>>>))
 
 data Statement = Sequence [Statement] 
                | Assign String Expression 
@@ -172,7 +175,7 @@ parseTerm =    parens parseExpression
 
 parseFunctionCall = try do  
   name <- identifier 
-  args <- parens $ commaSep parseExpression 
+  args <- parens $ commaSep parseExpression  
 
   return $ FunctionCall name args 
 
@@ -180,7 +183,4 @@ maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse parseProgram "" 
 
 getProgram :: String -> Statement
-getProgram str = 
-  case maybeGetProgram str of 
-    Left e -> error $ show e 
-    Right program -> program 
+getProgram = maybeGetProgram >>> either (error . show) id 
