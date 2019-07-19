@@ -135,21 +135,27 @@ parseReturn = do
   reserved "return"
   FunctionReturn <$> parseExpression <* semicolon
 
-parseExpression = buildExpressionParser operators parseTerm
+parseExpression = buildExpressionParser operators parseTerm <?> "expression"
 
+-- | Operators in order from highest precedence to lowest 
 operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
               Prefix (reservedOp "~" >> return (UnaryOp BitNot))],
+
              [makeOp "*" Multiply,
               makeOp "/" Divide,
               makeOp "%" Mod],
+
              [makeOp "+" Plus,
               makeOp "-" Minus],
+
              [makeOp "<" Less,
               makeOp "<=" LessEqual,
               makeOp ">" Greater,
               makeOp ">=" GreaterEqual],
+
              [makeOp "==" Equal,
               makeOp "!=" NotEqual],
+
              [makeOp "&&" And],
              [makeOp "||" Or]]
 
@@ -164,14 +170,11 @@ parseTerm =    parens parseExpression
            <|> (reserved "false" >> return (IntConstant 0))
            -- <?> "expression"
 
-parseFunctionCall = do 
-  (name, args) <- try do 
-    name <- identifier 
-    args <- parens $ commaSep parseExpression 
-    return (name, args)
+parseFunctionCall = try do  
+  name <- identifier 
+  args <- parens $ commaSep parseExpression 
 
   return $ FunctionCall name args 
-
 
 maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse parseProgram "" 
