@@ -33,9 +33,10 @@ string_test.bc0
 conditional_test.txt
 string_test.txt
 ```
-Examples are contained in the `examples/` directory. 
 
 ## Language Guide
+
+Examples are contained in the `examples/` directory. 
 
 ### Comments
 Comments are C++ style
