@@ -42,7 +42,7 @@ data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOpe
 data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
 data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
 
-data UnaryOperator = Not | Negate | BitNot deriving Show 
+data UnaryOperator = Negate | BitNot deriving Show 
 
 reservedWords = [ "if", "else", "while", 
                   "true", "false",
@@ -151,7 +151,8 @@ parseExpression = buildExpressionParser operators parseTerm <?> "expression"
 
 -- | Operators in order from highest precedence to lowest 
 operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
-              Prefix (reservedOp "~" >> return (UnaryOp BitNot))],
+              Prefix (reservedOp "~" >> return (UnaryOp BitNot)),
+              Prefix (reservedOp "!" >> return (UnaryOp BitNot))],
 
              [makeOp "*" $ NumericOp Multiply,
               makeOp "/" $ NumericOp Divide,

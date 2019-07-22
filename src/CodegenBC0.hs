@@ -12,6 +12,7 @@ import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
 import Control.Lens
+import Control.Arrow ((>>>))
 import Control.Monad.State 
 
 import System.FilePath (splitExtension)
@@ -46,7 +47,7 @@ emptyState = CodegenState [] [] []
    native pool -}
 
 data Bytecode = IAdd | ISub | IMul | IDiv | IRem
-              | IAnd | IOr 
+              | IAnd | IOr | IXor
 
               | VLoad Int | VStore Int 
               | Bipush Int | Ildc Int | Aldc Int 
@@ -54,6 +55,7 @@ data Bytecode = IAdd | ISub | IMul | IDiv | IRem
               | Goto Int 
               | IfCmpNeq Int | IfCmpEq Int 
               | IfCmpLt Int | IfCmpGt Int 
+              | IfCmpLe Int | IfCmpGe Int 
 
               | InvokeNative NativeFunction 
               | Pop | Return 
@@ -144,6 +146,13 @@ codegenExpression = \case
                         return ([VLoad index], variableType)
 
   FunctionCall funcName funcArgs -> error "TODO: function calls"
+  UnaryOp Negate (IntConstant i) -> codegenExpression $ IntConstant (-i)
+  UnaryOp operator operand -> do (operandCode, operandType) <- codegenExpression operand 
+                                 when (operandType /= IntExp) (error "negation or ~ applied to non-integer expression") 
+                                 return . (,IntExp) . (operandCode++) $ case operator of 
+                                                                          BitNot -> [Bipush (-1), IXor]
+                                                                          Negate -> [Bipush (-1), IMul] 
+
   BinOp operator lhs rhs -> do (lhsCode, lhsType) <- codegenExpression lhs 
                                (rhsCode, rhsType) <- codegenExpression rhs 
                                
@@ -169,12 +178,13 @@ codegenExpression = \case
           And -> IAnd
           Or -> IOr 
 
-        numericComparisonMap = \case -- TODO: String comparison would require 
+        numericComparisonMap = \case
           Equal -> IfCmpEq 
           NotEqual -> IfCmpNeq
           Less -> IfCmpLt 
           Greater -> IfCmpGt 
-          other -> error $ "Not supported yet: " ++ show other 
+          LessEqual -> IfCmpLe 
+          GreaterEqual -> IfCmpGe 
 
         comparisonJumpCode op = [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1]
 
@@ -216,6 +226,7 @@ bytecodeMap b = (\case
 
   IAnd -> "7E" 
   IOr -> "80" 
+  IXor -> "82"
 
   VLoad i -> "15 " ++ sbyteToHex i
   VStore i -> "36 " ++ sbyteToHex i 
@@ -229,9 +240,11 @@ bytecodeMap b = (\case
   IfCmpNeq i -> "A0 " ++ sshortToHex i 
   IfCmpLt i -> "A1 " ++ sshortToHex i 
   IfCmpGt i -> "A3 " ++ sshortToHex i 
+  IfCmpLe i -> "A4" ++ sshortToHex i 
+  IfCmpGe i -> "A2" ++ sshortToHex i 
 
-  InvokeNative func -> "B7 " ++ ushortToHex (fromEnum func)
-  Return -> "B0") b ++ "       \t# " ++ (showBytecode b) ++ "\n" 
+  InvokeNative func -> "B7 " ++ ushortToHex (fromEnum func) 
+  Return -> "B0") b ++ "       \t# " ++ showBytecode b ++ "\n" 
 
 showBytecode :: Bytecode -> String  
 showBytecode = \case 
@@ -261,6 +274,8 @@ bytecodeArity = \case
   IfCmpNeq _ -> 3 
   IfCmpLt _ -> 3
   IfCmpGt _ -> 3 
+  IfCmpLe _ -> 3 
+  IfCmpGe _ -> 3 
 
   VLoad _ -> 2
   VStore _ -> 2 
