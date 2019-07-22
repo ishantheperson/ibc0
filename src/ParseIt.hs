@@ -1,7 +1,10 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
 {-# LANGUAGE BlockArguments, LambdaCase #-}
-module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..),
+module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..), VariableDecl,
+                NumericOperator(..), ComparisonOperator(..),
                 maybeGetProgram, getProgram) where 
+
+import Util 
 
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr 
@@ -11,12 +14,17 @@ import qualified Text.ParserCombinators.Parsec.Token as Tok
 import Data.Either (either)
 import Control.Arrow ((>>>))
 
+instance CompilationError ParseError where 
+  getStage = const "Parsing" 
+
+-- | Represents a variable name with a type 
+type VariableDecl = (String, String)
 data Statement = Sequence [Statement] 
-               | Assign String Expression 
+               | Assign VariableDecl Expression 
                | If Expression Statement Statement 
                | While Expression Statement 
                | Print Expression
-               | FunctionDecl String [String] Statement
+               | FunctionDecl String String [VariableDecl] Statement
                | FunctionReturn Expression  
                | FunctionCallStatement Expression 
                    deriving Show 
@@ -29,10 +37,10 @@ data Expression = -- Terms
                 | UnaryOp UnaryOperator Expression 
                     deriving Show 
 
-data BinOperator = Plus | Minus | Multiply | Mod | Divide 
-                 | And | Or | Equal | NotEqual 
-                 | Less | LessEqual | Greater | GreaterEqual 
-                     deriving Show 
+data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOperator deriving Show 
+
+data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
+data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
 
 data UnaryOperator = Not | Negate | BitNot deriving Show 
 
@@ -111,11 +119,12 @@ parseWhile = do
 parseFunctionDecl = do 
   (name, args) <- try do 
     name <- identifier 
-    args <- parens $ commaSep identifier
+    args <- parens $ commaSep parseVariableDecl
     return (name, args) 
 
+  declType <- parseTypeAnnotation 
   body <- parseSingleStatementFunction <|> parseMultiStatementFunction 
-  return $ FunctionDecl name args body 
+  return $ FunctionDecl name declType args body 
 
   where parseSingleStatementFunction = do 
           reservedOp "=>"
@@ -124,7 +133,7 @@ parseFunctionDecl = do
         parseMultiStatementFunction = braces $ parseSequence 
 
 parseAssign = do 
-  name <- identifier 
+  name <- parseVariableDecl 
   reservedOp "="
   expr <- parseExpression 
   semicolon 
@@ -144,23 +153,23 @@ parseExpression = buildExpressionParser operators parseTerm <?> "expression"
 operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
               Prefix (reservedOp "~" >> return (UnaryOp BitNot))],
 
-             [makeOp "*" Multiply,
-              makeOp "/" Divide,
-              makeOp "%" Mod],
+             [makeOp "*" $ NumericOp Multiply,
+              makeOp "/" $ NumericOp Divide,
+              makeOp "%" $ NumericOp Mod],
 
              [makeOp "+" Plus,
-              makeOp "-" Minus],
+              makeOp "-" $ NumericOp Minus],
 
-             [makeOp "<" Less,
-              makeOp "<=" LessEqual,
-              makeOp ">" Greater,
-              makeOp ">=" GreaterEqual],
-
-             [makeOp "==" Equal,
-              makeOp "!=" NotEqual],
-
-             [makeOp "&&" And],
-             [makeOp "||" Or]]
+             [makeOp "<"  $ ComparisonOp Less,
+              makeOp "<=" $ ComparisonOp LessEqual,
+              makeOp ">"  $ ComparisonOp Greater,
+              makeOp ">=" $ ComparisonOp GreaterEqual],
+ 
+             [makeOp "==" $ ComparisonOp Equal,
+              makeOp "!=" $ ComparisonOp NotEqual],
+ 
+             [makeOp "&&" $ NumericOp And],
+             [makeOp "||" $ NumericOp Or]]
 
   where makeOp s f = Infix (reservedOp s >> return (BinOp f)) AssocLeft
 
@@ -179,6 +188,15 @@ parseFunctionCall = try do
 
   return $ FunctionCall name args 
 
+parseVariableDecl = do 
+  name <- identifier 
+  declType <- parseTypeAnnotation 
+
+  return (name, declType)
+
+-- | Parses a type annotation. Defaults to 'int'
+parseTypeAnnotation = option "int" (reservedOp ":" *> identifier)
+   
 maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse parseProgram "" 
 
