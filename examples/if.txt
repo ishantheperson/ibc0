@@ -7,3 +7,5 @@ if (i < j) {
 else {
   print j;
 }
+
+print "Expected output above: " + i;

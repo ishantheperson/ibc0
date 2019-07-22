@@ -2,8 +2,8 @@ i = 0;
 j = 0;
 
 while (i < 99999) {
-  i += 1;
-  j += i;
+  i = i + 1;
+  j = j + i;
 }
 
 print j;
