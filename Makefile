@@ -1,13 +1,16 @@
 GHC = ghc 
 BUILDDIR = build 
-GHCFLAGS = -isrc -O2 -W -odir $(BUILDDIR) -hidir $(BUILDDIR)
+GHCFLAGS = -O2 -W 
+GHCBUILDFLAGS = -isrc -odir $(BUILDDIR) -hidir $(BUILDDIR)
 
 SOURCE = $(shell find src/ -name "*.hs")
 
-all: simple
+EXECUTABLE = ibc0 
 
-simple: $(SOURCE)
-	$(GHC) $(GHCFLAGS) src/Main.hs -o simple  
+all: $(EXECUTABLE)
+
+$(EXECUTABLE): $(SOURCE)
+	$(GHC) $(GHCFLAGS) $(GHCBUILDFLAGS) src/Main.hs -o $(EXECUTABLE)
 
 clean: 
-	rm -f build/* simple 
+	rm -f build/* $(EXECUTABLE) examples/*.bc0
