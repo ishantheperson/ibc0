@@ -24,3 +24,4 @@ build/
 .DS_Store
 ibc0
 *.bc0
+doc/
