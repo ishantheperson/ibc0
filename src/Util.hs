@@ -13,3 +13,5 @@ lookupElemIndex = go 0
   where go index item = \case [] -> Nothing 
                               (key, value):xs | item == key -> Just (index, value)
                                               | otherwise -> go (index + 1) item xs 
+
+{-# INLINE lookupElemIndex #-}

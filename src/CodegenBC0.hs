@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase, TemplateHaskell, Rank2Types, TupleSections, ScopedTypeVariables #-} 
+{-# LANGUAGE LambdaCase, TemplateHaskell, Rank2Types, TupleSections #-} 
 module CodegenBC0 (compileFile,  
                    getBytecode, codegen) where 
 
@@ -12,7 +12,6 @@ import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
 import Control.Lens
-import Control.Arrow ((***)) 
 import Control.Monad.State 
 
 import System.FilePath (splitExtension)
@@ -20,14 +19,13 @@ import System.FilePath (splitExtension)
 type IntPool = [Integer]  
 type VariableEnv = [(String, ExpressionType)] -- use elemIndex to get positions
 type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
--- e.g. ["01", "23", "45", "56", "00"]
+                           -- e.g. ["01", "23", "45", "56", "00"]
 
 data ExpressionType = IntExp | StringExp deriving (Show, Eq) 
 -- | Represents internal code generator state
 data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
 makeLenses ''CodegenState 
 emptyState = CodegenState [] [] [] 
-
 
 {- C0VM bytecode format
    Header (magic sequence, version #)
@@ -87,7 +85,7 @@ codegen :: Statement -> String
 codegen p = let (bytecode, pools) = runState (codegenStatement p) emptyState 
                 intPoolBytes = codegenIntPool (view intPool pools)
                 stringPoolBytes = codegenStringPool (view stringPool pools)
-                mainBytes = codegenMain (view variables pools) bytecode 
+                mainBytes = codegenMain (view variables pools) bytecode
 
             in unlines [header, 
                         intPoolBytes, 
@@ -151,24 +149,18 @@ codegenExpression = \case
                                
                                -- when (not $ validateType lhs rhs operator) (error $ "Invalid types")
                                case (operator, lhsType, rhsType) of 
-                                 (NumericOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [mapNumericOp op], IntExp)
+                                 (NumericOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [numericOpMap op], IntExp)
                                  (ComparisonOp op, IntExp, IntExp) -> return (lhsCode ++ 
                                                                               rhsCode ++ 
-                                                                              [mapNumericComparison op 8, Bipush 0, Goto 5, Bipush 1], IntExp)
-
+                                                                              [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1], IntExp)
+                                
                                  (Plus, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [IAdd], IntExp)
                                  (Plus, StringExp, IntExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringFromInt, InvokeNative StringJoin], StringExp)
                                  (Plus, IntExp, StringExp) -> return (lhsCode ++ [InvokeNative StringFromInt] ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
                                  (Plus, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
                                  -- others TODO 
 
-
-  where validateType lhsType rhsType = \case 
-          Plus -> True 
-          NumericOp _ -> lhsType == IntExp && rhsType == IntExp
-          ComparisonOp _ -> lhsType == rhsType 
-
-        mapNumericOp = \case 
+  where numericOpMap = \case 
           Minus -> ISub 
           Multiply -> IMul 
           Divide -> IDiv 
@@ -176,7 +168,7 @@ codegenExpression = \case
           And -> IAnd
           Or -> IOr 
 
-        mapNumericComparison = \case -- TODO: String comparison would require 
+        numericComparisonMap = \case -- TODO: String comparison would require 
           Equal -> IfCmpEq 
           NotEqual -> IfCmpNeq
           Less -> IfCmpLt 
@@ -194,7 +186,7 @@ codegenString string = do pool <- view stringPool <$> get
 codegenIntPool :: IntPool -> String 
 codegenIntPool intPool = let lengthBytes = ushortToHex $ length intPool
                              intBytes = intToHex . fromInteger <$> intPool 
-                         in lengthBytes ++ " # int pool count\n " ++ unwords intBytes 
+                         in lengthBytes ++ " # int pool count\n" ++ unwords intBytes 
 
 codegenStringPool :: StringPool -> String 
 codegenStringPool stringPool = let lengthBytes = ushortToHex $ length stringPool 
@@ -281,9 +273,9 @@ data NativeFunction = StringFromInt
                         deriving (Show, Enum, Bounded)
 -- This should be loaded from a file instead 
 -- Maybe parsing c0_c0ffi.h 
-mapNativeFunc exp = let code = case exp of StringFromInt -> "00 01 00 63"
+nativeFuncMap exp = let code = case exp of StringFromInt -> "00 01 00 63"
                                            StringJoin -> "00 02 00 64"
-                                           NativePrint -> "00 01 00 06"
+                                           NativePrint -> "00 01 00 0A" -- change 0A to 06 for print instead of println
                     in code ++ " # " ++ show exp 
 
 header, footer :: String 
@@ -291,7 +283,7 @@ header = "C0 C0 FF EE 00 13 # header\n"
 footer = let functions = [minBound..maxBound] :: [NativeFunction]
              
              countText = ushortToHex (length functions) ++ " # native pool count"
-             functionsText = map mapNativeFunc functions 
+             functionsText = map nativeFuncMap functions 
 
          in unlines $ countText:functionsText
 
