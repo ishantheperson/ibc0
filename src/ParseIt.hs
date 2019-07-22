@@ -1,60 +1,52 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
-{-# LANGUAGE BlockArguments #-}
-module ParseIt (BoolExpr(..), BoolOp(..), CmpOp(..), 
-                ArithExpr(..), ArithOp(..), 
-                Statement(..), Expression(..),
+{-# LANGUAGE BlockArguments, LambdaCase #-}
+module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..), VariableDecl,
+                NumericOperator(..), ComparisonOperator(..),
                 maybeGetProgram, getProgram) where 
+
+import Util 
 
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr 
 import Text.ParserCombinators.Parsec.Language 
 import qualified Text.ParserCombinators.Parsec.Token as Tok 
 
-data BoolExpr = BoolConst Bool 
-              | Not BoolExpr
-              | BoolBinary BoolOp BoolExpr BoolExpr
-              | CmpBinary CmpOp ArithExpr ArithExpr
-                  deriving Show 
+import Data.Either (either)
+import Control.Arrow ((>>>))
 
-data BoolOp = And | Or deriving (Show, Eq) 
-data CmpOp = Less | LessEqual | Greater | GreaterEqual 
-           | Equal | NotEqual deriving (Show, Eq) 
+instance CompilationError ParseError where 
+  getStage = const "Parsing" 
 
-data ArithExpr = IntConstant Integer  
-               | Variable String 
-               | Negate ArithExpr 
-               | ArithBinary ArithOp ArithExpr ArithExpr
-
-data ArithOp = Add | Subtract | Multiply | Divide | Mod deriving Show 
+-- | Represents a variable name with a type 
+type VariableDecl = (String, String)
 data Statement = Sequence [Statement] 
-               | Assign String Expression 
-               | If BoolExpr Statement Statement 
-               | While BoolExpr Statement 
+               | Assign VariableDecl Expression 
+               | If Expression Statement Statement 
+               | While Expression Statement 
                | Print Expression
-               | FunctionDecl String [String] Statement
+               | FunctionDecl String String [VariableDecl] Statement
                | FunctionReturn Expression  
+               | FunctionCallStatement Expression 
                    deriving Show 
 
-data Expression = BoolExpr BoolExpr | ArithExpr ArithExpr | StringLiteral String 
-                | FunctionCall String [Expression] 
-                    deriving Show
+data Expression = -- Terms
+                  IntConstant Integer | StringLiteral String | Identifier String 
+                | FunctionCall String [Expression]
+                  -- Expression parsers 
+                | BinOp BinOperator Expression Expression 
+                | UnaryOp UnaryOperator Expression 
+                    deriving Show 
 
-instance Show ArithExpr where 
-  show (IntConstant i) = show i 
-  show (Variable v) = v 
-  show (Negate e) = "-(" ++ show e ++ ")"
-  show (ArithBinary op lhs rhs) = let lhsText = show lhs 
-                                      rhsText = show rhs 
-                                      opText = case op of Add -> "+"
-                                                          Subtract -> "-"
-                                                          Multiply -> "*"
-                                                          Divide -> "/"
-                                                          Mod -> "%"
-                                      in unwords [lhsText, opText, rhsText]
+data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOperator deriving Show 
+
+data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
+data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
+
+data UnaryOperator = Not | Negate | BitNot deriving Show 
 
 reservedWords = [ "if", "else", "while", 
                   "true", "false",
-                  "print" ]
+                  "print", "return" ]
 
 reservedOps = [ "+", "-", "*", "/", "==", "!=", "!", "&&", "||",
                 "+=", "*=", "-=", "/=", "%=", "=", "=>" ]
@@ -67,7 +59,7 @@ languageDef = emptyDef {
   Tok.identLetter = alphaNum,
   Tok.reservedNames = reservedWords,
   Tok.reservedOpNames = reservedOps,
-  Tok.opLetter = oneOf "+-*/=!&|%"
+  Tok.opLetter = oneOf "+-*/=!&|%<>"
 }
 
 lexer = Tok.makeTokenParser languageDef 
@@ -83,37 +75,34 @@ whitespace = Tok.whiteSpace lexer
 stringLiteral = Tok.stringLiteral lexer 
 commaSep = Tok.commaSep lexer 
 
-parseProgram :: Parser Statement 
+parseProgram, parseSequence, parseStatement :: Parser Statement 
+
 parseProgram = do 
   whitespace 
   program <- parseSequence 
   eof
   return program 
-
-parseSequence :: Parser Statement 
+ 
 parseSequence = do 
   statementList <- many parseStatement 
   return $ case statementList of 
             [s] -> s 
             _ -> Sequence statementList 
 
-parseStatement :: Parser Statement 
 parseStatement =     parseIf 
                  <|> parseWhile
+                 <|> FunctionCallStatement <$> try (parseFunctionCall <* semicolon)
                  <|> parseFunctionDecl
                  <|> parseAssign 
                  <|> parsePrint 
+                 <|> parseReturn 
                  <?> "statement/declaration"
 
-parseExpression =    parseFunctionCall
-                 <|> (try $ ArithExpr <$> parseArithExpr) 
-                 <|> (try $ BoolExpr <$> parseBoolExpr)
-                 <|> (StringLiteral <$> stringLiteral)
-                 <?> "expression"
+parseIf, parseWhile, parseFunctionDecl, parseAssign, parsePrint, parseReturn :: Parser Statement 
 
 parseIf = do 
   reserved "if"
-  condition <- parens parseBoolExpr
+  condition <- parens parseExpression
   
   ifBody <- braces parseSequence 
   elseBody <- option (Sequence []) (reserved "else" *> braces parseSequence) 
@@ -122,7 +111,7 @@ parseIf = do
 
 parseWhile = do 
   reserved "while" 
-  condition <- parens parseBoolExpr 
+  condition <- parens parseExpression 
   loopBody <- braces parseSequence 
 
   return $ While condition loopBody 
@@ -130,11 +119,12 @@ parseWhile = do
 parseFunctionDecl = do 
   (name, args) <- try do 
     name <- identifier 
-    args <- parens $ commaSep identifier
+    args <- parens $ commaSep parseVariableDecl
     return (name, args) 
 
+  declType <- parseTypeAnnotation 
   body <- parseSingleStatementFunction <|> parseMultiStatementFunction 
-  return $ FunctionDecl name args body 
+  return $ FunctionDecl name declType args body 
 
   where parseSingleStatementFunction = do 
           reservedOp "=>"
@@ -142,87 +132,73 @@ parseFunctionDecl = do
 
         parseMultiStatementFunction = braces $ parseSequence 
 
-parseFunctionCall = do 
-  (name, args) <- try do 
-    name <- identifier 
-    args <- parens $ commaSep parseExpression 
-    return (name, args)
-
-  return $ FunctionCall name args 
-
 parseAssign = do 
-  name <- identifier 
-  op <- choice (map (\s -> reservedOp s >> return s) ["=", "+=", "-=", "*=", "/="])
+  name <- parseVariableDecl 
+  reservedOp "="
   expr <- parseExpression 
   semicolon 
-  return $ case op of 
-             "=" -> Assign name expr 
-             c:"=" -> let operation = 
-                               case c of 
-                                 '+' -> Add
-                                 '-' -> Subtract 
-                                 '*' -> Multiply 
-                                 '/' -> Divide 
-                                 _ -> error "(supposedly impossible) parser error"
-                          expr' = 
-                               case expr of -- FIXME: Can be avoided by creating new 
-                                 ArithExpr e -> e  -- AST node type for compound assignment
-                                 _ -> error "expected ArithExpr"
-                      in Assign name (ArithExpr $ ArithBinary operation (Variable name) expr') 
-             _ -> error "(supposedly impossible) parser error" 
+  return $ Assign name expr 
 
 parsePrint = do 
   reserved "print" 
   Print <$> parseExpression <* semicolon
 
-parseArithExpr :: Parser ArithExpr 
-parseArithExpr = buildExpressionParser arithOperators arithTerm 
+parseReturn = do 
+  reserved "return"
+  FunctionReturn <$> parseExpression <* semicolon
 
-parseBoolExpr :: Parser BoolExpr
-parseBoolExpr = buildExpressionParser boolOperators boolTerm 
+parseExpression = buildExpressionParser operators parseTerm <?> "expression"
 
-arithOperators = [[Prefix (reservedOp "-" >> return (Negate))],
-                  [Infix (reservedOp "*" >> return (ArithBinary Multiply)) AssocLeft,
-                   Infix (reservedOp "/" >> return (ArithBinary Divide)) AssocLeft,
-                   Infix (reservedOp "%" >> return (ArithBinary Mod)) AssocLeft],
-                  [Infix (reservedOp "+" >> return (ArithBinary Add)) AssocLeft,
-                   Infix (reservedOp "-" >> return (ArithBinary Subtract)) AssocLeft]]
+-- | Operators in order from highest precedence to lowest 
+operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
+              Prefix (reservedOp "~" >> return (UnaryOp BitNot))],
 
-boolOperators = [[Prefix (reservedOp "!" >> return (Not))],
-                 [Infix (reservedOp "||" >> return (BoolBinary Or)) AssocLeft],
-                 [Infix (reservedOp "&&" >> return (BoolBinary And)) AssocLeft]]
+             [makeOp "*" $ NumericOp Multiply,
+              makeOp "/" $ NumericOp Divide,
+              makeOp "%" $ NumericOp Mod],
 
-arithTerm =     parens parseArithExpr 
-            <|> (Variable <$> identifier) 
-            <|> (IntConstant <$> integer)
-            <?> "arithmetic expression"
+             [makeOp "+" Plus,
+              makeOp "-" $ NumericOp Minus],
 
-boolTerm =     parens parseBoolExpr 
-           <|> parseCmpExpression 
-           <|> (reserved "true" >> return (BoolConst True))
-           <|> (reserved "false" >> return (BoolConst False))
-           <?> "boolean expression"
+             [makeOp "<"  $ ComparisonOp Less,
+              makeOp "<=" $ ComparisonOp LessEqual,
+              makeOp ">"  $ ComparisonOp Greater,
+              makeOp ">=" $ ComparisonOp GreaterEqual],
+ 
+             [makeOp "==" $ ComparisonOp Equal,
+              makeOp "!=" $ ComparisonOp NotEqual],
+ 
+             [makeOp "&&" $ NumericOp And],
+             [makeOp "||" $ NumericOp Or]]
 
-parseCmpExpression = do 
-  lhs <- parseArithExpr 
-  op <- parseRelation 
-  rhs <- parseArithExpr 
+  where makeOp s f = Infix (reservedOp s >> return (BinOp f)) AssocLeft
 
-  return $ CmpBinary op lhs rhs 
+parseTerm =    parens parseExpression 
+           <|> parseFunctionCall
+           <|> Identifier <$> identifier 
+           <|> IntConstant<$> integer 
+           <|> StringLiteral <$> stringLiteral
+           <|> (reserved "true" >> return (IntConstant 1))
+           <|> (reserved "false" >> return (IntConstant 0))
+           -- <?> "expression"
 
-parseRelation =     (reservedOp "==" >> return Equal)
-                <|> (reservedOp "!=" >> return NotEqual) 
-                <|> (reservedOp "<" >> return Less)
-                <|> (reservedOp "<=" >> return LessEqual)
-                <|> (reservedOp ">" >> return Greater)
-                <|> (reservedOp ">=" >> return GreaterEqual)
-                <?> "comparison operator"
+parseFunctionCall = try do  
+  name <- identifier 
+  args <- parens $ commaSep parseExpression  
 
+  return $ FunctionCall name args 
+
+parseVariableDecl = do 
+  name <- identifier 
+  declType <- parseTypeAnnotation 
+
+  return (name, declType)
+
+-- | Parses a type annotation. Defaults to 'int'
+parseTypeAnnotation = option "int" (reservedOp ":" *> identifier)
+   
 maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse parseProgram "" 
 
 getProgram :: String -> Statement
-getProgram str = 
-  case maybeGetProgram str of 
-    Left e -> error $ show e 
-    Right program -> program 
+getProgram = maybeGetProgram >>> either (error . show) id 
