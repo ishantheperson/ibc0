@@ -182,34 +182,6 @@ codegenExpression = \case
           Less -> IfCmpLt 
           Greater -> IfCmpGt 
           other -> error $ "Not supported yet: " ++ show other 
-                     
-
-{-
--- Generates code which pushes 0 (false) or 1 (true) to the stack 
-codegenBoolExpression :: CodegenBuilder BoolExpr 
-codegenBoolExpression = \case 
-  BoolConst b -> return [Bipush $ fromEnum b]
-  -- Simulate (!x) with (1 - x). Alternative could xor with -1 
-  Not e -> do expCode <- codegenBoolExpression e 
-              return $ [Bipush 1] ++ expCode ++ [ISub]
-  
-  BoolBinary op lhs rhs -> do let opcode = case op of And -> IAnd 
-                                                      Or -> IOr 
-                               -- TODO: short circuit evaluation 
-                              lhsCode <- codegenBoolExpression lhs 
-                              rhsCode <- codegenBoolExpression rhs 
-                              return $ lhsCode ++ rhsCode ++ [opcode]
-  
-  CmpBinary op lhs rhs -> do let opcode = case op of Equal -> IfCmpEq 
-                                                     NotEqual -> IfCmpNeq
-                                                     Less -> IfCmpLt 
-                                                     Greater -> IfCmpGt 
-                                                     other -> error $ "Not supported yet: " ++ show other 
-                                                      
-                             lhsCode <- codegenArithExpression lhs 
-                             rhsCode <- codegenArithExpression rhs 
-                             return $ lhsCode ++ rhsCode ++ [opcode 8, Bipush 0, Goto 5, Bipush 1]
--}
 
 codegenString :: CodegenBuilder String 
 codegenString string = do pool <- view stringPool <$> get 
