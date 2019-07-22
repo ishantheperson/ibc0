@@ -21,7 +21,7 @@ type VariableEnv = [(String, ExpressionType)] -- use elemIndex to get positions
 type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
                            -- e.g. ["01", "23", "45", "56", "00"]
 
-data ExpressionType = IntExp | StringExp deriving (Show, Eq) 
+data ExpressionType = IntExp | StringExp deriving (Eq, Show) 
 -- | Represents internal code generator state
 data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
 makeLenses ''CodegenState 
@@ -98,6 +98,7 @@ type CodegenBuilder a = a -> State CodegenState [Bytecode]
 
 codegenStatement :: CodegenBuilder Statement 
 codegenStatement = \case 
+  Sequence statements -> concat <$> traverse codegenStatement statements 
   Print e -> do (expressionCode, expressionType) <- codegenExpression e 
                 return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
                                                                    StringExp -> printBytecode)
@@ -126,7 +127,6 @@ codegenStatement = \case
                                                          ++ bodyCode
                         return $ code ++ [Goto $ negate (bytecodeLength code), Comment "Loop end"]
 
-  Sequence statements -> concat <$> traverse codegenStatement statements 
   unsupported -> error $ "Unsupported operation (for now): " ++ show unsupported
 
   where printIntBytecode = [InvokeNative StringFromInt] ++ printBytecode 
@@ -150,15 +150,16 @@ codegenExpression = \case
                                -- when (not $ validateType lhs rhs operator) (error $ "Invalid types")
                                case (operator, lhsType, rhsType) of 
                                  (NumericOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [numericOpMap op], IntExp)
-                                 (ComparisonOp op, IntExp, IntExp) -> return (lhsCode ++ 
-                                                                              rhsCode ++ 
-                                                                              [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1], IntExp)
+                                 (ComparisonOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ comparisonJumpCode op, IntExp)
+                                 (ComparisonOp op, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ 
+                                                                                    [InvokeNative StringCompare, Bipush 0] ++ 
+                                                                                    comparisonJumpCode op, IntExp)
                                 
                                  (Plus, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [IAdd], IntExp)
                                  (Plus, StringExp, IntExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringFromInt, InvokeNative StringJoin], StringExp)
                                  (Plus, IntExp, StringExp) -> return (lhsCode ++ [InvokeNative StringFromInt] ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
                                  (Plus, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
-                                 -- others TODO 
+                                 _ -> error $ "Type mismatch in expression: " ++ show (BinOp operator lhs rhs)
 
   where numericOpMap = \case 
           Minus -> ISub 
@@ -174,6 +175,8 @@ codegenExpression = \case
           Less -> IfCmpLt 
           Greater -> IfCmpGt 
           other -> error $ "Not supported yet: " ++ show other 
+
+        comparisonJumpCode op = [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1]
 
 codegenString :: CodegenBuilder String 
 codegenString string = do pool <- view stringPool <$> get 
@@ -269,12 +272,14 @@ bytecodeArity = \case
 
 data NativeFunction = StringFromInt 
                     | StringJoin
+                    | StringCompare
                     | NativePrint 
                         deriving (Show, Enum, Bounded)
 -- This should be loaded from a file instead 
 -- Maybe parsing c0_c0ffi.h 
 nativeFuncMap exp = let code = case exp of StringFromInt -> "00 01 00 63"
                                            StringJoin -> "00 02 00 64"
+                                           StringCompare -> "00 02 00 5E"
                                            NativePrint -> "00 01 00 0A" -- change 0A to 06 for print instead of println
                     in code ++ " # " ++ show exp 
 

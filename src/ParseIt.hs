@@ -157,7 +157,7 @@ operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
               makeOp "/" $ NumericOp Divide,
               makeOp "%" $ NumericOp Mod],
 
-             [makeOp "+" Plus,
+             [makeOp "+"   Plus,
               makeOp "-" $ NumericOp Minus],
 
              [makeOp "<"  $ ComparisonOp Less,
