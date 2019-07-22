@@ -6,8 +6,10 @@ class Show e => CompilationError e where
   getStage :: e -> String 
 
 -- | Looks up an item in an association list and 
--- | returns the corresponding index as well 
--- | lookupElemIndex "bar" [("foo", "free"), ("bar", "buzz")] => Just (1, "buzz")
+--   returns the corresponding index as well 
+--  
+-- >>> lookupElemIndex "bar" [("foo", "free"), ("bar", "buzz")] =
+-- Just (1, "buzz")
 lookupElemIndex :: (Eq a, Integral i) => a -> [(a, b)] -> Maybe (i, b)
 lookupElemIndex = go 0 
   where go index item = \case [] -> Nothing 

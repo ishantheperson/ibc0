@@ -7,10 +7,13 @@ SOURCE = $(shell find src/ -name "*.hs")
 
 EXECUTABLE = ibc0 
 
-all: $(EXECUTABLE)
+all: $(EXECUTABLE) 
 
 $(EXECUTABLE): $(SOURCE)
 	$(GHC) $(GHCFLAGS) $(GHCBUILDFLAGS) src/Main.hs -o $(EXECUTABLE)
 
+doc: $(SOURCE)
+	haddock --html -o doc $(SOURCE)
+
 clean: 
-	rm -f build/* $(EXECUTABLE) examples/*.bc0
+	rm -rf build/* $(EXECUTABLE) examples/*.bc0 doc

@@ -110,16 +110,21 @@ codegenStatement = \case
                                      -- TODO: don't ignore declType
                                      return $ expressionCode ++ instruction
 
-  If test ifBody elseBody -> do (testCode, _) <- codegenExpression test 
+  If test ifBody elseBody -> do (testCode, testType) <- codegenExpression test 
+                                when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
+
                                 ifBodyCode <- codegenStatement ifBody 
                                 elseBodyCode <- codegenStatement elseBody 
+
                                 return $ testCode ++ [Bipush 0, IfCmpNeq 6, 
                                                       Goto (3 + bytecodeLength ifBodyCode)] 
                                                   ++ ifBodyCode 
                                                   ++ [Goto (3 + bytecodeLength elseBodyCode)]
                                                   ++ elseBodyCode 
                                                   
-  While test body -> do (testCode, _) <- codegenExpression test 
+  While test body -> do (testCode, testType) <- codegenExpression test 
+                        when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
+
                         bodyCode <- codegenStatement body 
 
                         let code = [Comment "Loop test"] ++ testCode 
@@ -142,13 +147,13 @@ codegenExpression = \case
 
   StringLiteral str -> codegenString str >>= return . (,StringExp)
   Identifier name -> do variablesEnv <- view variables <$> get 
-                        let (index, variableType) = fromMaybe (error $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
+                        let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
                         return ([VLoad index], variableType)
 
   FunctionCall funcName funcArgs -> error "TODO: function calls"
   UnaryOp Negate (IntConstant i) -> codegenExpression $ IntConstant (-i)
   UnaryOp operator operand -> do (operandCode, operandType) <- codegenExpression operand 
-                                 when (operandType /= IntExp) (error "negation or ~ applied to non-integer expression") 
+                                 when (operandType /= IntExp) (errorWithoutStackTrace "negation or ~ applied to non-integer expression") 
                                  return . (,IntExp) . (operandCode++) $ case operator of 
                                                                           BitNot -> [Bipush (-1), IXor]
                                                                           Negate -> [Bipush (-1), IMul] 
