@@ -1,6 +1,6 @@
 # ibc0
 
-A work-in-progress compiler for a simple language which targets BC0.
+A work-in-progress compiler for a language which targets BC0.
 
 ### Dependencies
 
@@ -16,16 +16,16 @@ Simply compile with `make`.
 
 ## Usage
 
-This consists of an executable named `simple`. There was an interpreter/REPL
+This consists of an executable named `ibc0`. There was an interpreter/REPL
 but these have been removed in order to focus on the code generator.
 
-The BC0 generator is run by passing the `-b` flag to `simple`, followed by file names.
+The BC0 generator is run by passing the `-b` flag to `ibc0`, followed by file names.
 ```sh
 % ls 
 conditional_test.txt
 string_test.txt
 
-% simple -b *.txt
+% ibc0 -b *.txt
 
 % ls 
 conditional_test.bc0
