@@ -23,3 +23,4 @@ cabal.project.local~
 build/
 .DS_Store
 ibc0
+*.bc0
