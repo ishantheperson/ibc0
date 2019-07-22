@@ -2,3 +2,11 @@ a = "hello ";
 b = "world";
 
 print a + b;
+print "testing string compare ops";
+
+if (a < b) {
+  print "hello is less than world";
+}
+else {
+  print "hello is not less than world";
+}
