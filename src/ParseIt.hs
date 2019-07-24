@@ -20,7 +20,7 @@ instance CompilationError ParseError where
 -- | Represents a variable name with a type 
 type VariableDecl = (String, String)
 data Statement = Sequence [Statement] 
-               | Assign VariableDecl Expression 
+               | Assign LValue Expression 
                | If Expression Statement Statement 
                | While Expression Statement 
                | Print Expression
@@ -29,56 +29,35 @@ data Statement = Sequence [Statement]
                | FunctionCallStatement Expression 
                    deriving Show 
 
+data LValue = VariableL VariableDecl 
+            | ArrayL String Expression 
+                deriving Show
+
 data Expression = -- Terms
                   IntConstant Integer | StringLiteral String | Identifier String 
                 | FunctionCall String [Expression]
                 | ArrayLiteral [Expression]
+                | ArrayAccess Expression Expression 
                   -- Expression parsers 
                 | BinOp BinOperator Expression Expression 
                 | UnaryOp UnaryOperator Expression 
                     deriving Show 
 
 data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOperator deriving Show 
-
 data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
 data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
-
 data UnaryOperator = Negate | BitNot deriving Show 
 
-reservedWords = [ "if", "else", "while", 
-                  "true", "false",
-                  "print", "return" ]
+-- Public API 
+-- | Returns either one parser error or an AST
+maybeGetProgram :: String -> Either ParseError Statement
+maybeGetProgram = parse parseProgram "" 
 
-reservedOps = [ "+", "-", "*", "/", "==", "!=", "!", "&&", "||",
-                "+=", "*=", "-=", "/=", "%=", "=", "=>" ]
-
-languageDef = emptyDef { 
-  Tok.commentStart = "/*",
-  Tok.commentEnd = "*/",
-  Tok.commentLine = "//",
-  Tok.identStart = letter, 
-  Tok.identLetter = alphaNum,
-  Tok.reservedNames = reservedWords,
-  Tok.reservedOpNames = reservedOps,
-  Tok.opLetter = oneOf "+-*/=!&|%<>"
-}
-
-lexer = Tok.makeTokenParser languageDef 
-
-identifier = Tok.identifier lexer 
-reserved = Tok.reserved lexer 
-reservedOp = Tok.reservedOp lexer 
-parens = Tok.parens lexer 
-braces = Tok.braces lexer 
-integer = Tok.integer lexer 
-semicolon = Tok.semi lexer 
-whitespace = Tok.whiteSpace lexer
-stringLiteral = Tok.stringLiteral lexer 
-commaSep = Tok.commaSep lexer 
-brackets = Tok.brackets lexer 
+-- | Either returns an AST or crashes w/ syntax error
+getProgram :: String -> Statement
+getProgram = maybeGetProgram >>> either (error . show) id 
 
 parseProgram, parseSequence, parseStatement :: Parser Statement 
-
 parseProgram = do 
   whitespace 
   program <- parseSequence 
@@ -135,7 +114,7 @@ parseFunctionDecl = do
         parseMultiStatementFunction = braces parseSequence 
 
 parseAssign = do 
-  name <- parseVariableDecl 
+  name <- parseLvalue 
   reservedOp "="
   expr <- parseExpression 
   semicolon 
@@ -149,32 +128,18 @@ parseReturn = do
   reserved "return"
   FunctionReturn <$> parseExpression <* semicolon
 
+parseLvalue :: Parser LValue 
+parseLvalue =  try parseArrayL 
+           <|> VariableL <$> parseVariableDecl
+
+parseArrayL = do 
+  name <- identifier 
+  pos <- brackets parseExpression 
+
+  return $ ArrayL name pos 
+
+parseExpression :: Parser Expression 
 parseExpression = buildExpressionParser operators parseTerm <?> "expression"
-
--- | Operators in order from highest precedence to lowest 
-operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
-              Prefix (reservedOp "~" >> return (UnaryOp BitNot)),
-              Prefix (reservedOp "!" >> return (UnaryOp BitNot))],
-
-             [makeOp "*" $ NumericOp Multiply,
-              makeOp "/" $ NumericOp Divide,
-              makeOp "%" $ NumericOp Mod],
-
-             [makeOp "+"   Plus,
-              makeOp "-" $ NumericOp Minus],
-
-             [makeOp "<"  $ ComparisonOp Less,
-              makeOp "<=" $ ComparisonOp LessEqual,
-              makeOp ">"  $ ComparisonOp Greater,
-              makeOp ">=" $ ComparisonOp GreaterEqual],
- 
-             [makeOp "==" $ ComparisonOp Equal,
-              makeOp "!=" $ ComparisonOp NotEqual],
- 
-             [makeOp "&&" $ NumericOp And],
-             [makeOp "||" $ NumericOp Or]]
-
-  where makeOp s f = Infix (reservedOp s >> return (BinOp f)) AssocLeft
 
 parseTerm =    parens parseExpression 
            <|> ArrayLiteral <$> parseArrayLiteral
@@ -202,9 +167,62 @@ parseVariableDecl = do
 
 -- | Parses a type annotation. Defaults to 'int'
 parseTypeAnnotation = option "int" (reservedOp ":" *> identifier)
-   
-maybeGetProgram :: String -> Either ParseError Statement
-maybeGetProgram = parse parseProgram "" 
 
-getProgram :: String -> Statement
-getProgram = maybeGetProgram >>> either (error . show) id 
+-- | Operators in order from highest precedence to lowest 
+operators = [[Postfix (flip ArrayAccess <$> brackets parseExpression)],
+             [Prefix (reservedOp "-" >> return (UnaryOp Negate)),
+              Prefix (reservedOp "~" >> return (UnaryOp BitNot)),
+              Prefix (reservedOp "!" >> return (UnaryOp BitNot))],
+
+             [makeOp "*" $ NumericOp Multiply,
+              makeOp "/" $ NumericOp Divide,
+              makeOp "%" $ NumericOp Mod],
+
+             [makeOp "+"   Plus,
+              makeOp "-" $ NumericOp Minus],
+
+             [makeOp "<"  $ ComparisonOp Less,
+              makeOp "<=" $ ComparisonOp LessEqual,
+              makeOp ">"  $ ComparisonOp Greater,
+              makeOp ">=" $ ComparisonOp GreaterEqual],
+ 
+             [makeOp "==" $ ComparisonOp Equal,
+              makeOp "!=" $ ComparisonOp NotEqual],
+ 
+             [makeOp "&&" $ NumericOp And],
+             [makeOp "||" $ NumericOp Or]]
+
+  where makeOp s f = Infix (reservedOp s >> return (BinOp f)) AssocLeft                                
+
+
+reservedWords = [ "if", "else", "while", 
+                  "true", "false",
+                  "print", "return" ]
+
+reservedOps = [ "+", "-", "*", "/", "==", "!=", "!", "&&", "||",
+                "+=", "*=", "-=", "/=", "%=", "=", "=>" ]
+
+languageDef = emptyDef { 
+Tok.commentStart = "/*",
+Tok.commentEnd = "*/",
+Tok.commentLine = "//",
+Tok.identStart = letter, 
+Tok.identLetter = alphaNum,
+Tok.reservedNames = reservedWords,
+Tok.reservedOpNames = reservedOps,
+Tok.opLetter = oneOf "+-*/=!&|%<>"
+}
+
+lexer = Tok.makeTokenParser languageDef 
+
+identifier = Tok.identifier lexer 
+reserved = Tok.reserved lexer 
+reservedOp = Tok.reservedOp lexer 
+parens = Tok.parens lexer 
+braces = Tok.braces lexer 
+integer = Tok.integer lexer 
+semicolon = Tok.semi lexer 
+whitespace = Tok.whiteSpace lexer
+stringLiteral = Tok.stringLiteral lexer 
+commaSep = Tok.commaSep lexer 
+brackets = Tok.brackets lexer 
