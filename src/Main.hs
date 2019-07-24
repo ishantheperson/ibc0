@@ -14,8 +14,8 @@ main = do
   case getOpt Permute options args of 
     (opts, files, []) -> 
       if | Help `elem` opts -> printHelp "Simple BC0 compiler" 
-         | length files == 0 -> do printHelp "Error: missing filenames"
-                                   exitFailure
+         | null files -> do printHelp "Error: missing filenames"
+                            exitFailure
 
          | GenBytecode `elem` opts -> mapM_ compileFile files 
          | otherwise -> do putStrLn "Error: The -b is currently required"

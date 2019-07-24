@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
-{-# LANGUAGE BlockArguments, LambdaCase #-}
+{-# LANGUAGE BlockArguments #-}
 module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..), VariableDecl,
                 NumericOperator(..), ComparisonOperator(..),
                 maybeGetProgram, getProgram) where 
@@ -130,7 +130,7 @@ parseFunctionDecl = do
           reservedOp "=>"
           FunctionReturn <$> parseExpression <* reservedOp ";"
 
-        parseMultiStatementFunction = braces $ parseSequence 
+        parseMultiStatementFunction = braces parseSequence 
 
 parseAssign = do 
   name <- parseVariableDecl 

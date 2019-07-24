@@ -6,7 +6,6 @@ import Util
 import ParseIt
 
 import Data.Char (ord)
-import Data.List (elemIndex)
 import Data.Maybe (fromMaybe)
 
 import Text.Printf (printf)
@@ -143,10 +142,10 @@ codegenExpression :: Expression -> State CodegenState ([Bytecode], ExpressionTyp
 codegenExpression = \case 
   IntConstant i -> if -128 < i && i < 127 
                      then return ([Bipush $ fromInteger i], IntExp)
-                     else updatePool i intPool (pure . Ildc) >>= return . (,IntExp)
+                     else (,IntExp) <$> updatePool i intPool (pure . Ildc) 
 
-  StringLiteral str -> codegenString str >>= return . (,StringExp)
-  Identifier name -> do variablesEnv <- view variables <$> get 
+  StringLiteral str -> (,StringExp) <$> codegenString str
+  Identifier name -> do variablesEnv <- gets $ view variables
                         let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
                         return ([VLoad index], variableType)
 
@@ -194,7 +193,7 @@ codegenExpression = \case
         comparisonJumpCode op = [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1]
 
 codegenString :: CodegenBuilder String 
-codegenString string = do pool <- view stringPool <$> get 
+codegenString string = do pool <- gets $ view stringPool
                           let pos = length pool
                               byteString = map (ubyteToHex . ord) string 
                           modify (over stringPool (++(byteString ++ ["00"]))) 
@@ -259,14 +258,6 @@ showBytecode = \case
 bytecodeLength :: [Bytecode] -> Int 
 bytecodeLength = sum . map bytecodeArity
 
--- Requires rank 2 types for Lens'  
-updatePool :: Eq a => a -> Lens' b [a] -> (Int -> c) -> State b c 
-updatePool elem lens f = do pool <- view lens <$> get 
-                            case elemIndex elem pool of 
-                              Just index -> return $ f index 
-                              Nothing -> do modify (over lens (++[elem]))
-                                            return . f $ length pool 
-
 bytecodeArity :: Bytecode -> Int 
 bytecodeArity = \case 
   Ildc _ -> 3 
@@ -294,14 +285,7 @@ data NativeFunction = StringFromInt
                     | StringJoin
                     | StringCompare
                     | NativePrint 
-                        deriving (Show, Enum, Bounded)
--- This should be loaded from a file instead 
--- Maybe parsing c0_c0ffi.h 
-nativeFuncMap exp = let code = case exp of StringFromInt -> "00 01 00 63"
-                                           StringJoin -> "00 02 00 64"
-                                           StringCompare -> "00 02 00 5E"
-                                           NativePrint -> "00 01 00 0A" -- change 0A to 06 for print instead of println
-                    in code ++ " # " ++ show exp 
+                        deriving (Enum, Bounded, Show)
 
 header, footer :: String 
 header = "C0 C0 FF EE 00 13 # header\n" 
@@ -311,6 +295,15 @@ footer = let functions = [minBound..maxBound] :: [NativeFunction]
              functionsText = map nativeFuncMap functions 
 
          in unlines $ countText:functionsText
+
+        -- This should be loaded from a file instead 
+        -- Maybe parsing c0_c0ffi.h  
+  where nativeFuncMap exp = let code = case exp of StringFromInt -> "00 01 00 63"
+                                                   StringJoin -> "00 02 00 64"
+                                                   StringCompare -> "00 02 00 5E"
+                                                   NativePrint -> "00 01 00 0A" -- change 0A to 06 for print instead of println
+                            in code ++ " # " ++ show exp 
+
 
 sbyteToHex, ubyteToHex, ushortToHex, sshortToHex, intToHex :: Int -> String 
 sbyteToHex i = printf "%02X" (if i < 0 then i + (2^8) else i)
