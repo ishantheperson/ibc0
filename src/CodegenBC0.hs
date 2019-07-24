@@ -21,7 +21,8 @@ type VariableEnv = [(String, ExpressionType)] -- use elemIndex to get positions
 type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
                            -- e.g. ["01", "23", "45", "56", "00"]
 
-data ExpressionType = IntExp | StringExp deriving (Eq, Show) 
+data ExpressionType = IntExp | StringExp | VoidExp 
+                    | ArrayExp ExpressionType deriving (Eq, Show) 
 -- | Represents internal code generator state
 data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
 makeLenses ''CodegenState 
@@ -56,8 +57,15 @@ data Bytecode = IAdd | ISub | IMul | IDiv | IRem
               | IfCmpLt Int | IfCmpGt Int 
               | IfCmpLe Int | IfCmpGe Int 
 
+              | NewArray Int 
+              | AAdds
+              | IMLoad | IMStore 
+              | AMLoad | AMStore 
+
               | InvokeNative NativeFunction 
-              | Pop | Return 
+              | Return 
+
+              | Pop | Dup 
 
               -- Not an actual bytecode, but can be inserted into a [Bytecode] 
               -- list to cause a comment line to show up in the generated code
@@ -150,6 +158,20 @@ codegenExpression = \case
                         return ([VLoad index], variableType)
 
   FunctionCall funcName funcArgs -> error "TODO: function calls"
+  ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- Welp looks like we need a HM type system 
+  ArrayLiteral expressions -> do (expressionCodes, expressionTypes) <- unzip <$> traverse codegenExpression expressions 
+                                 when (not $ same expressionTypes) (errorWithoutStackTrace "mixed types in array literal")
+                                 when (length expressions > 127) (errorWithoutStackTrace "array size too big")
+                                 
+                                 -- (arraySizeInstructions, _) <- codegenExpression (IntConstant . fromIntegral $ length expressions)
+                                 -- Currently because of bipush the max array literal size is 127 
+                                 -- However this isn't too hard to fix using traverse 
+                                 -- But honestly this entire file needs to be split up 
+                                 let arrayType = head expressionTypes
+                                     allocInstructions = [Bipush $ length expressions, NewArray $ typeSize arrayType]
+                                     elemInstructions = concat $ zipWith (\i e -> [Dup, Bipush i, AAdds] ++ e ++ [typeStoreInstruction arrayType]) [0..] expressionCodes 
+                                 return . (,ArrayExp arrayType) $ (allocInstructions ++ elemInstructions)
+
   UnaryOp Negate (IntConstant i) -> codegenExpression $ IntConstant (-i)
   UnaryOp operator operand -> do (operandCode, operandType) <- codegenExpression operand 
                                  when (operandType /= IntExp) (errorWithoutStackTrace "negation or ~ applied to non-integer expression") 
@@ -221,6 +243,7 @@ bytecodeMap :: Bytecode -> String
 bytecodeMap b = (\case 
   Comment _ -> "" -- wow so clever   
   Pop -> "57"
+  Dup -> "59"
 
   IAdd -> "60"
   ISub -> "64"
@@ -234,6 +257,15 @@ bytecodeMap b = (\case
 
   VLoad i -> "15 " ++ sbyteToHex i
   VStore i -> "36 " ++ sbyteToHex i 
+
+  NewArray i -> "BC " ++ ubyteToHex i 
+  AAdds -> "63"
+
+  IMLoad -> "2E"
+  IMStore -> "4E"
+
+  AMLoad -> "2F"
+  AMStore -> "4F"
 
   Bipush i -> "10 " ++ sbyteToHex i 
   Ildc i -> "13 " ++ ushortToHex i 
@@ -258,6 +290,7 @@ showBytecode = \case
 bytecodeLength :: [Bytecode] -> Int 
 bytecodeLength = sum . map bytecodeArity
 
+-- FIXME: merge this with bytecodeMap 
 bytecodeArity :: Bytecode -> Int 
 bytecodeArity = \case 
   Ildc _ -> 3 
@@ -277,9 +310,27 @@ bytecodeArity = \case
   VStore _ -> 2 
   Bipush _ -> 2
 
+  NewArray _ -> 2 -- FIXME: veritfy this value 
+
   Comment _ -> 0 
 
   _ -> 1 -- most instructions do not take operands 
+
+-- | Size in bytes for a given type 
+typeSize :: ExpressionType -> Int 
+typeSize = \case 
+  IntExp -> 4 
+  StringExp -> 8 
+  ArrayExp _ -> 8 
+
+typeLoadInstruction, typeStoreInstruction :: ExpressionType -> Bytecode
+typeLoadInstruction = \case 
+  IntExp -> IMLoad
+  _ -> AMLoad -- no char type 
+
+typeStoreInstruction = \case 
+  IntExp -> IMStore 
+  _ -> AMStore
 
 data NativeFunction = StringFromInt 
                     | StringJoin
@@ -303,23 +354,3 @@ footer = let functions = [minBound..maxBound] :: [NativeFunction]
                                                    StringCompare -> "00 02 00 5E"
                                                    NativePrint -> "00 01 00 0A" -- change 0A to 06 for print instead of println
                             in code ++ " # " ++ show exp 
-
-
-sbyteToHex, ubyteToHex, ushortToHex, sshortToHex, intToHex :: Int -> String 
-sbyteToHex i = printf "%02X" (if i < 0 then i + (2^8) else i)
-ubyteToHex i = printf "%02X" i 
-
-ushortToHex i = addSpaces (printf "%04X" i) 
-sshortToHex i = addSpaces (printf "%04X" (if i < 0 then i + (2^16) else i)) 
-
--- signed 32-bit int to hex
-intToHex i = addSpaces (printf "%08X" (if i < 0 then i + (2^32) else i))
-
--- adds spaces every 2 characters 
--- e.g. 1234 -> 12 34 
-addSpaces :: String -> String 
-addSpaces = \case 
-  [] -> []
-  a:[] -> a:[]
-  a:b:[] -> a:b:[]
-  a:b:xs -> a:b:' ':(addSpaces xs)

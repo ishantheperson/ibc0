@@ -32,6 +32,7 @@ data Statement = Sequence [Statement]
 data Expression = -- Terms
                   IntConstant Integer | StringLiteral String | Identifier String 
                 | FunctionCall String [Expression]
+                | ArrayLiteral [Expression]
                   -- Expression parsers 
                 | BinOp BinOperator Expression Expression 
                 | UnaryOp UnaryOperator Expression 
@@ -74,6 +75,7 @@ semicolon = Tok.semi lexer
 whitespace = Tok.whiteSpace lexer
 stringLiteral = Tok.stringLiteral lexer 
 commaSep = Tok.commaSep lexer 
+brackets = Tok.brackets lexer 
 
 parseProgram, parseSequence, parseStatement :: Parser Statement 
 
@@ -175,6 +177,7 @@ operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
   where makeOp s f = Infix (reservedOp s >> return (BinOp f)) AssocLeft
 
 parseTerm =    parens parseExpression 
+           <|> ArrayLiteral <$> parseArrayLiteral
            <|> parseFunctionCall
            <|> Identifier <$> identifier 
            <|> IntConstant<$> integer 
@@ -182,6 +185,8 @@ parseTerm =    parens parseExpression
            <|> (reserved "true" >> return (IntConstant 1))
            <|> (reserved "false" >> return (IntConstant 0))
            -- <?> "expression"
+
+parseArrayLiteral = brackets $ commaSep parseExpression 
 
 parseFunctionCall = try do  
   name <- identifier 
