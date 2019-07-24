@@ -112,10 +112,26 @@ codegenStatement = \case
                 return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
                                                                    StringExp -> printBytecode)
 
-  Assign (varName, declType) e -> do (expressionCode, expressionType) <- codegenExpression e  
-                                     instruction <- updatePool (varName, expressionType) variables (pure . VStore)
-                                     -- TODO: don't ignore declType
-                                     return $ expressionCode ++ instruction
+  Assign (VariableL (varName, declType)) e -> do (expressionCode, expressionType) <- codegenExpression e  
+                                                 instruction <- updatePool (varName, expressionType) variables (pure . VStore)
+                                                 -- TODO: don't ignore declType
+                                                 return $ expressionCode ++ instruction
+
+  Assign (ArrayL arrayName indexExp) e -> do variablesEnv <- gets $ view variables -- FIXME: extract to function 
+                                             let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown array: " ++ arrayName) 
+                                                                           (lookupElemIndex arrayName variablesEnv)
+                                                 arrayType = case variableType of ArrayExp t -> t
+                                                                                  _ -> errorWithoutStackTrace "array variable required" 
+
+                                             (indexCode, indexType) <- codegenExpression indexExp 
+                                             (valueCode, valueType) <- codegenExpression e 
+
+                                             -- FIXME: holy guacamole we need a better system to report type errors 
+                                             when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
+                                             when (case variableType of { ArrayExp t | t == valueType -> False; _ -> True })
+                                               (errorWithoutStackTrace "array type and expression type must match")
+
+                                             return $ [VLoad index] ++ indexCode ++ [AAdds] ++ valueCode ++ [typeStoreInstruction arrayType]
 
   If test ifBody elseBody -> do (testCode, testType) <- codegenExpression test 
                                 when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
@@ -156,6 +172,15 @@ codegenExpression = \case
   Identifier name -> do variablesEnv <- gets $ view variables
                         let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
                         return ([VLoad index], variableType)
+
+  ArrayAccess arrayExp indexExp -> do (arrayCode, arrayType) <- codegenExpression arrayExp 
+                                      (indexCode, indexType) <- codegenExpression indexExp 
+
+                                      when (case (arrayType, indexType) of { (ArrayExp _, IntExp) -> False; _ -> True })
+                                        (errorWithoutStackTrace "array expression required or integer subscript required")
+
+                                      let (ArrayExp t) = arrayType
+                                      return (arrayCode ++ indexCode ++ [AAdds, typeLoadInstruction t], t)
 
   FunctionCall funcName funcArgs -> error "TODO: function calls"
   ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- Welp looks like we need a HM type system 

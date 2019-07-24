@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
 {-# LANGUAGE BlockArguments #-}
-module ParseIt (Statement(..), Expression(..), BinOperator(..), UnaryOperator(..), VariableDecl,
-                NumericOperator(..), ComparisonOperator(..),
+module ParseIt (Statement(..), Expression(..), LValue(..), VariableDecl,
+                NumericOperator(..), ComparisonOperator(..), BinOperator(..), UnaryOperator(..),
                 maybeGetProgram, getProgram) where 
 
 import Util 
@@ -56,6 +56,8 @@ maybeGetProgram = parse parseProgram ""
 -- | Either returns an AST or crashes w/ syntax error
 getProgram :: String -> Statement
 getProgram = maybeGetProgram >>> either (error . show) id 
+
+-- Private 
 
 parseProgram, parseSequence, parseStatement :: Parser Statement 
 parseProgram = do 
