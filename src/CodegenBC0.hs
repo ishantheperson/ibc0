@@ -2,7 +2,9 @@
 module CodegenBC0 (compileFile,  
                    getBytecode, codegen) where 
 
-import Util 
+import Util
+
+import AST 
 import ParseIt
 
 import Data.Char (ord)
@@ -11,7 +13,6 @@ import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
 import Control.Lens
-import Control.Arrow ((>>>))
 import Control.Monad.State 
 
 import System.FilePath (splitExtension)
@@ -23,8 +24,12 @@ type StringPool = [String] -- strings arent interned, this is an array of indivi
 
 data ExpressionType = IntExp | StringExp | VoidExp 
                     | ArrayExp ExpressionType deriving (Eq, Show) 
+
+isArray = \case ArrayExp _ -> True 
+                _ -> False 
+
 -- | Represents internal code generator state
-data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
+data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } deriving Show 
 makeLenses ''CodegenState 
 emptyState = CodegenState [] [] [] 
 
@@ -112,26 +117,23 @@ codegenStatement = \case
                 return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
                                                                    StringExp -> printBytecode)
 
-  Assign (VariableL (varName, declType)) e -> do (expressionCode, expressionType) <- codegenExpression e  
-                                                 instruction <- updatePool (varName, expressionType) variables (pure . VStore)
-                                                 -- TODO: don't ignore declType
-                                                 return $ expressionCode ++ instruction
+  -- Assign is weird because VariableL at top level is a VStore 
+  -- but arrayL is [ai]mstore. 
+  Assign (VariableL varName) e -> do (expressionCode, expressionType) <- codegenExpression e  
+                                     instruction <- updatePool (varName, expressionType) variables (pure . VStore)
+                                     -- TODO: don't ignore declType
+                                     return $ expressionCode ++ instruction
 
-  Assign (ArrayL arrayName indexExp) e -> do variablesEnv <- gets $ view variables -- FIXME: extract to function 
-                                             let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown array: " ++ arrayName) 
-                                                                           (lookupElemIndex arrayName variablesEnv)
-                                                 arrayType = case variableType of ArrayExp t -> t
-                                                                                  _ -> errorWithoutStackTrace "array variable required" 
+  Assign lvalue e -> do (lvalueCode, lvalueType) <- codegenLvalue lvalue 
+                        (valueCode, valueType) <- codegenExpression e 
 
-                                             (indexCode, indexType) <- codegenExpression indexExp 
-                                             (valueCode, valueType) <- codegenExpression e 
+                        -- FIXME: holy guacamole we need a better system to report type errors 
+                        -- when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
+                        when (lvalueType /= valueType) (errorWithoutStackTrace "type mismatch")
+                        --when (case variableType of { ArrayExp t | t == valueType -> False; _ -> True })
+                         -- (errorWithoutStackTrace "array type and expression type must match")
 
-                                             -- FIXME: holy guacamole we need a better system to report type errors 
-                                             when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
-                                             when (case variableType of { ArrayExp t | t == valueType -> False; _ -> True })
-                                               (errorWithoutStackTrace "array type and expression type must match")
-
-                                             return $ [VLoad index] ++ indexCode ++ [AAdds] ++ valueCode ++ [typeStoreInstruction arrayType]
+                        return $ lvalueCode ++ valueCode ++ [typeStoreInstruction lvalueType]
 
   If test ifBody elseBody -> do (testCode, testType) <- codegenExpression test 
                                 when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
@@ -162,6 +164,36 @@ codegenStatement = \case
   where printIntBytecode = [InvokeNative StringFromInt] ++ printBytecode 
         printBytecode = [InvokeNative NativePrint, Pop] 
 
+{-
+  a[0] = ...;
+  vload, aadds.
+
+  a[0][0] = ...;
+  vload, aadds, amload, aadds
+ -}
+
+codegenLvalue :: LValue -> State CodegenState ([Bytecode], ExpressionType)
+codegenLvalue = \case 
+  VariableL varName -> do (index, variableType) <- getVariable varName 
+                          return ([VLoad index], variableType)
+                          -- Could be made more concise with Control.Arrow (first)
+  
+  ArrayL arrayExp indexExp -> do (indexCode, indexType) <- codegenExpression indexExp 
+                                 when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
+
+                                 (arrayCode, arrayType) <- codegenLvalue arrayExp
+                                 when (not . isArray $ arrayType) (errorWithoutStackTrace "array required")
+
+                                 -- Strip off one array layer 
+                                 let (ArrayExp t) = arrayType 
+                                     loadInstr = case t of ArrayExp _ -> [AAdds, AMLoad]
+                                                           _ -> [AAdds]
+                                 return (arrayCode ++ indexCode ++ loadInstr, t)
+
+
+getVariable :: Integral i => String -> State CodegenState (i, ExpressionType) 
+getVariable name = gets $ view variables >>= return . fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) . lookupElemIndex name 
+
 codegenExpression :: Expression -> State CodegenState ([Bytecode], ExpressionType)
 codegenExpression = \case 
   IntConstant i -> if -128 < i && i < 127 
@@ -182,7 +214,7 @@ codegenExpression = \case
                                       let (ArrayExp t) = arrayType
                                       return (arrayCode ++ indexCode ++ [AAdds, typeLoadInstruction t], t)
 
-  FunctionCall funcName funcArgs -> error "TODO: function calls"
+  FunctionCall _ _ -> error "TODO: function calls"
   ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- Welp looks like we need a HM type system 
   ArrayLiteral expressions -> do (expressionCodes, expressionTypes) <- unzip <$> traverse codegenExpression expressions 
                                  when (not $ same expressionTypes) (errorWithoutStackTrace "mixed types in array literal")

@@ -4,7 +4,10 @@ module ParseIt (Statement(..), Expression(..), LValue(..),
                 NumericOperator(..), ComparisonOperator(..), BinOperator(..), UnaryOperator(..),
                 maybeGetProgram, getProgram) where 
 
+
 import Util 
+
+import AST 
 
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr 
@@ -16,36 +19,6 @@ import Control.Arrow ((>>>))
 
 instance CompilationError ParseError where 
   getStage = const "Parsing" 
-
--- | Represents a variable name with a type 
-data Statement = Sequence [Statement] 
-               | Assign LValue Expression 
-               | If Expression Statement Statement 
-               | While Expression Statement 
-               | Print Expression
-               | FunctionDecl String String [String] Statement
-               | FunctionReturn Expression  
-               | FunctionCallStatement Expression 
-                   deriving Show 
-
-data LValue = VariableL String  
-            | ArrayL LValue Expression 
-                deriving Show
-
-data Expression = -- Terms
-                  IntConstant Integer | StringLiteral String | Identifier String 
-                | FunctionCall String [Expression]
-                | ArrayLiteral [Expression]
-                | ArrayAccess Expression Expression 
-                  -- Expression rs 
-                | BinOp BinOperator Expression Expression 
-                | UnaryOp UnaryOperator Expression 
-                    deriving Show 
-
-data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOperator deriving Show 
-data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
-data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
-data UnaryOperator = Negate | BitNot deriving Show 
 
 -- Public API 
 -- | Returns either one r error or an AST
@@ -65,6 +38,7 @@ program = do
   eof
   return program 
  
+-- FIXME: is it still necessary to extract singleton statements 
 sequenceStmnts = do 
   statementList <- many statement 
   return $ case statementList of 
@@ -136,7 +110,7 @@ lvalue = VariableL <$> identifier >>= postfix
                            postfix $ ArrayL e index 
         
 expression, term :: Parser Expression 
-expression = buildExpressionParser operators postfix
+expression = buildExpressionParser operators postfix <?> "expression"
   where postfix = term >>= postfix'
 
         postfix', arrayAccess :: Expression -> Parser Expression 
@@ -177,8 +151,7 @@ variableDecl = identifier
 typeAnnotation = option "int" (reservedOp ":" *> identifier)
 
 -- | Operators in order from highest precedence to lowest 
-operators = [--[Postfix (flip ArrayAccess <$> brackets expression)],
-             [Prefix (reservedOp "-" >> return (UnaryOp Negate)),
+operators = [[Prefix (reservedOp "-" >> return (UnaryOp Negate)),
               Prefix (reservedOp "~" >> return (UnaryOp BitNot)),
               Prefix (reservedOp "!" >> return (UnaryOp BitNot))],
 
@@ -211,14 +184,14 @@ reservedOps = [ "+", "-", "*", "/", "==", "!=", "!", "&&", "||",
                 "+=", "*=", "-=", "/=", "%=", "=", "=>" ]
 
 languageDef = emptyDef { 
-Tok.commentStart = "/*",
-Tok.commentEnd = "*/",
-Tok.commentLine = "//",
-Tok.identStart = letter, 
-Tok.identLetter = alphaNum,
-Tok.reservedNames = reservedWords,
-Tok.reservedOpNames = reservedOps,
-Tok.opLetter = oneOf "+-*/=!&|%<>"
+  Tok.commentStart = "/*",
+  Tok.commentEnd = "*/",
+  Tok.commentLine = "//",
+  Tok.identStart = letter, 
+  Tok.identLetter = alphaNum,
+  Tok.reservedNames = reservedWords,
+  Tok.reservedOpNames = reservedOps,
+  Tok.opLetter = oneOf "+-*/=!&|%<>"
 }
 
 lexer = Tok.makeTokenParser languageDef 
