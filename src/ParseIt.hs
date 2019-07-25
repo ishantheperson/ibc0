@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
 {-# LANGUAGE BlockArguments #-}
-module ParseIt (Statement(..), Expression(..), LValue(..), VariableDecl,
+module ParseIt (Statement(..), Expression(..), LValue(..),
                 NumericOperator(..), ComparisonOperator(..), BinOperator(..), UnaryOperator(..),
                 maybeGetProgram, getProgram) where 
 
@@ -18,19 +18,18 @@ instance CompilationError ParseError where
   getStage = const "Parsing" 
 
 -- | Represents a variable name with a type 
-type VariableDecl = (String, String)
 data Statement = Sequence [Statement] 
                | Assign LValue Expression 
                | If Expression Statement Statement 
                | While Expression Statement 
                | Print Expression
-               | FunctionDecl String String [VariableDecl] Statement
+               | FunctionDecl String String [String] Statement
                | FunctionReturn Expression  
                | FunctionCallStatement Expression 
                    deriving Show 
 
-data LValue = VariableL VariableDecl 
-            | ArrayL String Expression 
+data LValue = VariableL String  
+            | ArrayL LValue Expression 
                 deriving Show
 
 data Expression = -- Terms
@@ -131,19 +130,16 @@ returnStmnt = do
   FunctionReturn <$> expression <* semicolon
 
 lvalue :: Parser LValue 
-lvalue =  try arrayL 
-      <|> VariableL <$> variableDecl
-
-arrayL = do 
-  name <- identifier 
-  pos <- brackets expression 
-
-  return $ ArrayL name pos 
-
-expression, postfix :: Parser Expression 
+lvalue = VariableL <$> identifier >>= postfix 
+  where postfix e = arrayAccess e <|> return e 
+        arrayAccess e = do index <- brackets expression 
+                           postfix $ ArrayL e index 
+        
+expression, term :: Parser Expression 
 expression = buildExpressionParser operators postfix
-postfix = term >>= postfix'
-  where postfix', arrayAccess :: Expression -> Parser Expression 
+  where postfix = term >>= postfix'
+
+        postfix', arrayAccess :: Expression -> Parser Expression 
         postfix' e = arrayAccess e <|> return e 
         arrayAccess e = do index <- brackets expression
                            postfix' $ ArrayAccess e index 
@@ -169,12 +165,14 @@ functionCall = try do
 
   return $ FunctionCall name args 
 
+{-
 variableDecl = do 
   name <- identifier 
   declType <- typeAnnotation 
 
   return (name, declType)
-
+-}
+variableDecl = identifier 
 -- | Parses a type annotation. Defaults to 'int'
 typeAnnotation = option "int" (reservedOp ":" *> identifier)
 
