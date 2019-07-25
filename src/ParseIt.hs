@@ -188,7 +188,7 @@ languageDef = emptyDef {
   Tok.commentEnd = "*/",
   Tok.commentLine = "//",
   Tok.identStart = letter, 
-  Tok.identLetter = alphaNum,
+  Tok.identLetter = alphaNum <|> char '_',
   Tok.reservedNames = reservedWords,
   Tok.reservedOpNames = reservedOps,
   Tok.opLetter = oneOf "+-*/=!&|%<>"

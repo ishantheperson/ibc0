@@ -10,8 +10,6 @@ import ParseIt
 import Data.Char (ord)
 import Data.Maybe (fromMaybe)
 
-import Text.Printf (printf)
-
 import Control.Lens
 import Control.Monad.State 
 
