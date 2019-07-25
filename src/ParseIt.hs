@@ -38,7 +38,7 @@ data Expression = -- Terms
                 | FunctionCall String [Expression]
                 | ArrayLiteral [Expression]
                 | ArrayAccess Expression Expression 
-                  -- Expression parsers 
+                  -- Expression rs 
                 | BinOp BinOperator Expression Expression 
                 | UnaryOp UnaryOperator Expression 
                     deriving Show 
@@ -49,129 +49,137 @@ data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | Greate
 data UnaryOperator = Negate | BitNot deriving Show 
 
 -- Public API 
--- | Returns either one parser error or an AST
+-- | Returns either one r error or an AST
 maybeGetProgram :: String -> Either ParseError Statement
-maybeGetProgram = parse parseProgram "" 
+maybeGetProgram = parse program "" 
 
 -- | Either returns an AST or crashes w/ syntax error
 getProgram :: String -> Statement
-getProgram = maybeGetProgram >>> either (error . show) id 
+getProgram = maybeGetProgram >>> either (errorWithoutStackTrace . show) id 
 
 -- Private 
 
-parseProgram, parseSequence, parseStatement :: Parser Statement 
-parseProgram = do 
+program, sequenceStmnts, statement :: Parser Statement 
+program = do 
   whitespace 
-  program <- parseSequence 
+  program <- sequenceStmnts
   eof
   return program 
  
-parseSequence = do 
-  statementList <- many parseStatement 
+sequenceStmnts = do 
+  statementList <- many statement 
   return $ case statementList of 
             [s] -> s 
             _ -> Sequence statementList 
 
-parseStatement =     parseIf 
-                 <|> parseWhile
-                 <|> FunctionCallStatement <$> try (parseFunctionCall <* semicolon)
-                 <|> parseFunctionDecl
-                 <|> parseAssign 
-                 <|> parsePrint 
-                 <|> parseReturn 
-                 <?> "statement/declaration"
+statement =  ifStmnt 
+         <|> whileLoop
+         <|> FunctionCallStatement <$> try (functionCall <* semicolon)
+         <|> functionDecl
+         <|> assign 
+         <|> printStmnt 
+         <|> returnStmnt 
+         <?> "statement/declaration"
 
-parseIf, parseWhile, parseFunctionDecl, parseAssign, parsePrint, parseReturn :: Parser Statement 
+ifStmnt, whileLoop, functionDecl, assign, printStmnt, returnStmnt :: Parser Statement 
 
-parseIf = do 
+ifStmnt = do 
   reserved "if"
-  condition <- parens parseExpression
+  condition <- parens expression
   
-  ifBody <- braces parseSequence 
-  elseBody <- option (Sequence []) (reserved "else" *> braces parseSequence) 
+  ifBody <- braces sequenceStmnts 
+  elseBody <- option (Sequence []) (reserved "else" *> braces sequenceStmnts) 
 
   return $ If condition ifBody elseBody
 
-parseWhile = do 
+whileLoop = do 
   reserved "while" 
-  condition <- parens parseExpression 
-  loopBody <- braces parseSequence 
+  condition <- parens expression 
+  loopBody <- braces sequenceStmnts 
 
   return $ While condition loopBody 
 
-parseFunctionDecl = do 
+functionDecl = do 
   (name, args) <- try do 
     name <- identifier 
-    args <- parens $ commaSep parseVariableDecl
+    args <- parens $ commaSep variableDecl
     return (name, args) 
 
-  declType <- parseTypeAnnotation 
-  body <- parseSingleStatementFunction <|> parseMultiStatementFunction 
+  declType <- typeAnnotation 
+  body <- singleStatementFunction <|> multiStatementFunction 
   return $ FunctionDecl name declType args body 
 
-  where parseSingleStatementFunction = do 
+  where singleStatementFunction = do 
           reservedOp "=>"
-          FunctionReturn <$> parseExpression <* reservedOp ";"
+          FunctionReturn <$> expression <* reservedOp ";"
 
-        parseMultiStatementFunction = braces parseSequence 
+        multiStatementFunction = braces sequenceStmnts
 
-parseAssign = do 
-  name <- parseLvalue 
+assign = do 
+  name <- lvalue 
   reservedOp "="
-  expr <- parseExpression 
+  expr <- expression 
   semicolon 
   return $ Assign name expr 
 
-parsePrint = do 
+printStmnt = do 
   reserved "print" 
-  Print <$> parseExpression <* semicolon
+  Print <$> expression <* semicolon
 
-parseReturn = do 
+returnStmnt = do 
   reserved "return"
-  FunctionReturn <$> parseExpression <* semicolon
+  FunctionReturn <$> expression <* semicolon
 
-parseLvalue :: Parser LValue 
-parseLvalue =  try parseArrayL 
-           <|> VariableL <$> parseVariableDecl
+lvalue :: Parser LValue 
+lvalue =  try arrayL 
+      <|> VariableL <$> variableDecl
 
-parseArrayL = do 
+arrayL = do 
   name <- identifier 
-  pos <- brackets parseExpression 
+  pos <- brackets expression 
 
   return $ ArrayL name pos 
 
-parseExpression :: Parser Expression 
-parseExpression = buildExpressionParser operators parseTerm <?> "expression"
+expression, postfix :: Parser Expression 
+expression = buildExpressionParser operators postfix
+postfix = term >>= postfix'
+  where postfix', arrayAccess :: Expression -> Parser Expression 
+        postfix' e = arrayAccess e <|> return e 
+        arrayAccess e = do index <- brackets expression
+                           postfix' $ ArrayAccess e index 
 
-parseTerm =    parens parseExpression 
-           <|> ArrayLiteral <$> parseArrayLiteral
-           <|> parseFunctionCall
-           <|> Identifier <$> identifier 
-           <|> IntConstant<$> integer 
-           <|> StringLiteral <$> stringLiteral
-           <|> (reserved "true" >> return (IntConstant 1))
-           <|> (reserved "false" >> return (IntConstant 0))
-           -- <?> "expression"
+        -- Terser but horribly unreadable 
+        -- arrayAccess e = brackets parseExpression >>= parsePostfix' . ArrayAccess e 
 
-parseArrayLiteral = brackets $ commaSep parseExpression 
+term =  parens expression 
+    <|> ArrayLiteral <$> arrayLiteral
+    <|> functionCall
+    <|> Identifier <$> identifier 
+    <|> IntConstant<$> integer 
+    <|> StringLiteral <$> stringLiteral
+    <|> (reserved "true" >> return (IntConstant 1))
+    <|> (reserved "false" >> return (IntConstant 0))
+    -- <?> "expression"
 
-parseFunctionCall = try do  
+arrayLiteral = brackets $ commaSep expression 
+
+functionCall = try do  
   name <- identifier 
-  args <- parens $ commaSep parseExpression  
+  args <- parens $ commaSep expression  
 
   return $ FunctionCall name args 
 
-parseVariableDecl = do 
+variableDecl = do 
   name <- identifier 
-  declType <- parseTypeAnnotation 
+  declType <- typeAnnotation 
 
   return (name, declType)
 
 -- | Parses a type annotation. Defaults to 'int'
-parseTypeAnnotation = option "int" (reservedOp ":" *> identifier)
+typeAnnotation = option "int" (reservedOp ":" *> identifier)
 
 -- | Operators in order from highest precedence to lowest 
-operators = [[Postfix (flip ArrayAccess <$> brackets parseExpression)],
+operators = [--[Postfix (flip ArrayAccess <$> brackets expression)],
              [Prefix (reservedOp "-" >> return (UnaryOp Negate)),
               Prefix (reservedOp "~" >> return (UnaryOp BitNot)),
               Prefix (reservedOp "!" >> return (UnaryOp BitNot))],
