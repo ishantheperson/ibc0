@@ -1,8 +1,9 @@
+{-# LANGUAGE LambdaCase #-}
 module AST where 
 
 -- | Represents a variable name with a type 
 data Statement = Sequence [Statement] 
-               | Assign LValue Expression 
+               | Assign Expression Expression 
                | If Expression Statement Statement 
                | While Expression Statement 
                | Print Expression
@@ -11,9 +12,11 @@ data Statement = Sequence [Statement]
                | FunctionCallStatement Expression 
                    deriving Show 
 
+{-
 data LValue = VariableL String  
             | ArrayL LValue Expression 
                 deriving Show
+-}
 
 data Expression = -- Terms
                   IntConstant Integer | StringLiteral String | Identifier String 
@@ -29,3 +32,16 @@ data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOpe
 data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
 data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
 data UnaryOperator = Negate | BitNot deriving Show
+
+-- TODO: nicer Show instances 
+{-
+instance Show Expression where 
+  show = \case 
+    IntConstant i -> show i 
+    StringLiteral s -> show s 
+    Identifier v -> v 
+    ArrayLiteral l -> show l 
+    ArrayAccess arr i -> (show arr) ++ "[" ++ show i ++ "]"
+    BinOp op lhs rhs -> lhs ++ " " ++ show op ++ " " ++ rhs 
+    UnaryOp -> show UnaryOp ++ show Expression
+-}

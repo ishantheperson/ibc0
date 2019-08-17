@@ -2,32 +2,30 @@
 module CodegenBC0 (compileFile,  
                    getBytecode, codegen) where 
 
-import Util
+import Util 
 
 import AST 
 import ParseIt
 
 import Data.Char (ord)
 import Data.Maybe (fromMaybe)
+import Data.Functor ((<&>))
 
 import Control.Lens
+-- import Control.Arrow ((>>>))
 import Control.Monad.State 
 
-import System.FilePath (splitExtension)
+import System.FilePath (replaceExtension)
 
-type IntPool = [Integer]  
+type IntPool = [Integer]   
 type VariableEnv = [(String, ExpressionType)] -- use elemIndex to get positions
 type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
                            -- e.g. ["01", "23", "45", "56", "00"]
 
 data ExpressionType = IntExp | StringExp | VoidExp 
                     | ArrayExp ExpressionType deriving (Eq, Show) 
-
-isArray = \case ArrayExp _ -> True 
-                _ -> False 
-
 -- | Represents internal code generator state
-data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } deriving Show 
+data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
 makeLenses ''CodegenState 
 emptyState = CodegenState [] [] [] 
 
@@ -85,10 +83,10 @@ instance CompilationError CodegenError where
 -- | with .bc0 
 compileFile :: FilePath -> IO () 
 compileFile file = 
-  let outputFile = (fst $ splitExtension file) ++ ".bc0"
+  let outputFile = replaceExtension file "bc0"
   in getBytecode <$> readFile file >>= writeFile outputFile
 
--- | Parses input string and generates bytecode
+-- | Parses input string and generates bytecode string 
 getBytecode :: String -> String 
 getBytecode = codegen . getProgram 
 
@@ -113,25 +111,29 @@ codegenStatement = \case
   Sequence statements -> concat <$> traverse codegenStatement statements 
   Print e -> do (expressionCode, expressionType) <- codegenExpression e 
                 return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
-                                                                   StringExp -> printBytecode)
+                                                                   StringExp -> printBytecode
+                                                                   _ -> errorWithoutStackTrace $ "cant print: " ++ show expressionType)
 
-  -- Assign is weird because VariableL at top level is a VStore 
-  -- but arrayL is [ai]mstore. 
-  Assign (VariableL varName) e -> do (expressionCode, expressionType) <- codegenExpression e  
-                                     instruction <- updatePool (varName, expressionType) variables (pure . VStore)
-                                     -- TODO: don't ignore declType
-                                     return $ expressionCode ++ instruction
+  Assign (Identifier v) e -> do 
+    (expressionCode, expressionType) <- codegenExpression e 
+    instruction <- updatePool (v, expressionType) variables (pure . VStore)
+    return $ expressionCode ++ instruction
 
-  Assign lvalue e -> do (lvalueCode, lvalueType) <- codegenLvalue lvalue 
-                        (valueCode, valueType) <- codegenExpression e 
+  Assign (ArrayAccess array index) e -> do 
+    (arrayCode, arrayType) <- codegenExpression array 
+    (indexCode, indexType) <- codegenExpression index 
 
-                        -- FIXME: holy guacamole we need a better system to report type errors 
-                        -- when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
-                        when (lvalueType /= valueType) (errorWithoutStackTrace "type mismatch")
-                        --when (case variableType of { ArrayExp t | t == valueType -> False; _ -> True })
-                         -- (errorWithoutStackTrace "array type and expression type must match")
+    when (indexType /= IntExp) (errorWithoutStackTrace "integer index required")
 
-                        return $ lvalueCode ++ valueCode ++ [typeStoreInstruction lvalueType]
+    (expressionCode, expressionType) <- codegenExpression e 
+    return $ case arrayType of 
+               ArrayExp arrayElemType | arrayElemType == expressionType -> 
+                 let arrayLoadCode = arrayCode ++ indexCode ++ [AAdds]
+                 in arrayLoadCode ++ expressionCode ++ [typeStoreInstruction arrayElemType] 
+
+               _ -> errorWithoutStackTrace "type mismatch "
+        
+  Assign _ _ -> errorWithoutStackTrace "Invalid lvalue"
 
   If test ifBody elseBody -> do (testCode, testType) <- codegenExpression test 
                                 when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
@@ -160,37 +162,7 @@ codegenStatement = \case
   unsupported -> error $ "Unsupported operation (for now): " ++ show unsupported
 
   where printIntBytecode = [InvokeNative StringFromInt] ++ printBytecode 
-        printBytecode = [InvokeNative NativePrint, Pop] 
-
-{-
-  a[0] = ...;
-  vload, aadds.
-
-  a[0][0] = ...;
-  vload, aadds, amload, aadds
- -}
-
-codegenLvalue :: LValue -> State CodegenState ([Bytecode], ExpressionType)
-codegenLvalue = \case 
-  VariableL varName -> do (index, variableType) <- getVariable varName 
-                          return ([VLoad index], variableType)
-                          -- Could be made more concise with Control.Arrow (first)
-  
-  ArrayL arrayExp indexExp -> do (indexCode, indexType) <- codegenExpression indexExp 
-                                 when (indexType /= IntExp) (errorWithoutStackTrace "integer subscript required")
-
-                                 (arrayCode, arrayType) <- codegenLvalue arrayExp
-                                 when (not . isArray $ arrayType) (errorWithoutStackTrace "array required")
-
-                                 -- Strip off one array layer 
-                                 let (ArrayExp t) = arrayType 
-                                     loadInstr = case t of ArrayExp _ -> [AAdds, AMLoad]
-                                                           _ -> [AAdds]
-                                 return (arrayCode ++ indexCode ++ loadInstr, t)
-
-
-getVariable :: Integral i => String -> State CodegenState (i, ExpressionType) 
-getVariable name = gets $ view variables >>= return . fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) . lookupElemIndex name 
+        printBytecode = [InvokeNative NativePrint, Pop]   
 
 codegenExpression :: Expression -> State CodegenState ([Bytecode], ExpressionType)
 codegenExpression = \case 
@@ -198,7 +170,7 @@ codegenExpression = \case
                      then return ([Bipush $ fromInteger i], IntExp)
                      else (,IntExp) <$> updatePool i intPool (pure . Ildc) 
 
-  StringLiteral str -> (,StringExp) <$> codegenString str
+  StringLiteral str -> codegenString str <&> (,StringExp)
   Identifier name -> do variablesEnv <- gets $ view variables
                         let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
                         return ([VLoad index], variableType)
@@ -212,14 +184,15 @@ codegenExpression = \case
                                       let (ArrayExp t) = arrayType
                                       return (arrayCode ++ indexCode ++ [AAdds, typeLoadInstruction t], t)
 
-  FunctionCall _ _ -> error "TODO: function calls"
-  ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- Welp looks like we need a HM type system 
+
+  FunctionCall funcName funcArgs -> error "TODO: function calls"
+  ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- FIXME: Welp looks like we need a HM type system 
   ArrayLiteral expressions -> do (expressionCodes, expressionTypes) <- unzip <$> traverse codegenExpression expressions 
                                  when (not $ same expressionTypes) (errorWithoutStackTrace "mixed types in array literal")
                                  when (length expressions > 127) (errorWithoutStackTrace "array size too big")
-                                 
+
                                  -- (arraySizeInstructions, _) <- codegenExpression (IntConstant . fromIntegral $ length expressions)
-                                 -- Currently because of bipush the max array literal size is 127 
+                                 -- FIXME: Currently because of bipush the max array literal size is 127 
                                  -- However this isn't too hard to fix using traverse 
                                  -- But honestly this entire file needs to be split up 
                                  let arrayType = head expressionTypes

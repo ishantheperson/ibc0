@@ -1,12 +1,15 @@
 {-# LANGUAGE MultiWayIf #-}
-import CodegenBC0 (compileFile)
+import ParseIt (maybeGetProgram)
+import CodegenBC0 (codegen)
 
 import System.Environment (getArgs)
 import System.Console.GetOpt 
 import System.Exit (exitFailure)
+import System.FilePath (replaceExtension)
 
-data Flag = GenBytecode | Help deriving (Show, Eq) 
+import Control.Monad (when)
 
+data Flag = Help | DumpAst | DumpState deriving (Show, Eq) 
 main :: IO () 
 main = do 
   args <- getArgs 
@@ -17,14 +20,24 @@ main = do
          | null files -> do printHelp "Error: missing filenames"
                             exitFailure
 
-         | GenBytecode `elem` opts -> mapM_ compileFile files 
-         | otherwise -> do putStrLn "Error: The -b is currently required"
-                           exitFailure
+         | otherwise -> do mapM_ (compileFile opts) files 
 
     (_, _, errors) -> printHelp $ concat errors
 
   where printHelp e = putStrLn e >> putStr (usageInfo "usage: ./ibc0 (flags) (filenames). By Ishan Bhargava" options)
 
         options = [ Option ['h', '?'] ["help"] (NoArg Help) "print this help message",
-                    Option ['b'] ["bytecode"] (NoArg GenBytecode) "generate BC0" ]
+                    Option ['t'] ["dump-ast"] (NoArg DumpAst) "prints out the AST",
+                    Option ['s'] ["dump-state"] (NoArg DumpState) "prints out the final codegen state" ]
 
+        compileFile :: [Flag] -> FilePath -> IO () 
+        compileFile flags fileName = do ast <- maybeGetProgram <$> readFile fileName  
+                                        case ast of 
+                                          Left parseError -> do putStrLn $ "Parsing '" ++ fileName ++ "' failed."
+                                                                print parseError 
+                                          Right ast -> do when (DumpAst `elem` flags) (print ast)
+                                                          let code = codegen ast 
+                                                              outfile = replaceExtension fileName "bc0"
+                                                          writeFile outfile code 
+                                                          
+                                                          

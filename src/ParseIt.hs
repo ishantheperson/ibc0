@@ -1,12 +1,8 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind -Wno-missing-signatures #-}
 {-# LANGUAGE BlockArguments #-}
-module ParseIt (Statement(..), Expression(..), LValue(..),
-                NumericOperator(..), ComparisonOperator(..), BinOperator(..), UnaryOperator(..),
-                maybeGetProgram, getProgram) where 
-
+module ParseIt (maybeGetProgram, getProgram) where 
 
 import Util 
-
 import AST 
 
 import Text.ParserCombinators.Parsec 
@@ -21,7 +17,7 @@ instance CompilationError ParseError where
   getStage = const "Parsing" 
 
 -- Public API 
--- | Returns either one r error or an AST
+-- | Returns either   one r error or an AST
 maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse program "" 
 
@@ -55,7 +51,6 @@ statement =  ifStmnt
          <?> "statement/declaration"
 
 ifStmnt, whileLoop, functionDecl, assign, printStmnt, returnStmnt :: Parser Statement 
-
 ifStmnt = do 
   reserved "if"
   condition <- parens expression
@@ -89,7 +84,7 @@ functionDecl = do
         multiStatementFunction = braces sequenceStmnts
 
 assign = do 
-  name <- lvalue 
+  name <- expression  
   reservedOp "="
   expr <- expression 
   semicolon 
@@ -103,12 +98,14 @@ returnStmnt = do
   reserved "return"
   FunctionReturn <$> expression <* semicolon
 
+{-
 lvalue :: Parser LValue 
 lvalue = VariableL <$> identifier >>= postfix 
   where postfix e = arrayAccess e <|> return e 
         arrayAccess e = do index <- brackets expression 
                            postfix $ ArrayL e index 
-        
+-}
+                           
 expression, term :: Parser Expression 
 expression = buildExpressionParser operators postfix <?> "expression"
   where postfix = term >>= postfix'
