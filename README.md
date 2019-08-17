@@ -2,6 +2,8 @@
 
 A work-in-progress compiler for a language which targets BC0.
 
+Current feature in development is [arrays](https://github.com/ishantheperson/ibc0/tree/arrays)
+
 ### Dependencies
 
 Requires the Haskell package `lens`
