@@ -10,6 +10,8 @@ string_matrix = [["a", "b"],
                  ["c", "d"]];
                 
 string_matrix[1][1] = "e";
+string_matrix[0] = a;
+
 
 M[1][2] = 122;
 
@@ -17,6 +19,7 @@ print a[0];
 print b[1 + 1];
 print M[1][2];
 print string_matrix[1][1];
+print string_matrix[0][0];
 
 /* Expected output
  * ---------------
@@ -24,4 +27,5 @@ print string_matrix[1][1];
  * 122
  * 122 
  * e
+ * hello world
  */
