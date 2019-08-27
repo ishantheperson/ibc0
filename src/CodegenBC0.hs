@@ -5,6 +5,7 @@ module CodegenBC0 (compileFile,
 import Util 
 
 import AST 
+import Bytecode 
 import ParseIt
 
 import Data.Char (ord)
@@ -22,10 +23,26 @@ type VariableEnv = [(String, ExpressionType)] -- use elemIndex to get positions
 type StringPool = [String] -- strings arent interned, this is an array of individual bytes 
                            -- e.g. ["01", "23", "45", "56", "00"]
 
+data FunctionInfo = FunctionInfo { -- | Number of local variables + parameters
+                                   numLocals :: Int,
+                                   -- | Parameter types 
+                                   parameters :: [ExpressionType],
+                                   -- | Function identifier 
+                                   functionName :: String,
+                                   -- | Function return type 
+                                   functionReturnType :: ExpressionType,
+                                   -- | Function code 
+                                   functionCode :: [Bytecode] }
+
+-- Example 
+addFunction = FunctionInfo 2 [IntExp, IntExp] "add" IntExp [VLoad 0, VLoad 1, IAdd]
+
 data ExpressionType = IntExp | StringExp | VoidExp 
                     | ArrayExp ExpressionType deriving (Eq, Show) 
 -- | Represents internal code generator state
-data CodegenState = CodegenState { _intPool :: IntPool, _variables :: VariableEnv, _stringPool :: StringPool } 
+data CodegenState = CodegenState { _intPool :: IntPool, 
+                                   _variables :: VariableEnv, 
+                                   _stringPool :: StringPool } 
 makeLenses ''CodegenState 
 emptyState = CodegenState [] [] [] 
 
@@ -47,32 +64,7 @@ emptyState = CodegenState [] [] []
    2 bytes - native pool count 
    native pool -}
 
-data Bytecode = IAdd | ISub | IMul | IDiv | IRem
-              | IAnd | IOr | IXor
-
-              | VLoad Int | VStore Int 
-              | Bipush Int | Ildc Int | Aldc Int 
-
-              | Goto Int 
-              | IfCmpNeq Int | IfCmpEq Int 
-              | IfCmpLt Int | IfCmpGt Int 
-              | IfCmpLe Int | IfCmpGe Int 
-
-              | NewArray Int 
-              | AAdds
-              | IMLoad | IMStore 
-              | AMLoad | AMStore 
-
-              | InvokeNative NativeFunction 
-              | Return 
-
-              | Pop | Dup 
-
-              -- Not an actual bytecode, but can be inserted into a [Bytecode] 
-              -- list to cause a comment line to show up in the generated code
-              | Comment String 
-                  deriving Show 
-{-
+   {-
 data CodegenError = UnknownVariable String -- TODO: add error handling through writerT monad transformer
 instance CompilationError CodegenError where 
   getStage = const "Codegeneration"
@@ -104,15 +96,18 @@ codegen p = let (bytecode, pools) = runState (codegenStatement p) emptyState
                         mainBytes, 
                         footer] 
 
-type CodegenBuilder a = a -> State CodegenState [Bytecode]
+-- type CodegenBuilder a = a -> State CodegenState [Bytecode]
+type CodegenBuilder a b = a -> State CodegenState b 
 
-codegenStatement :: CodegenBuilder Statement 
+codegenStatement :: CodegenBuilder Statement [Bytecode]
 codegenStatement = \case 
-  Sequence statements -> concat <$> traverse codegenStatement statements 
-  Print e -> do (expressionCode, expressionType) <- codegenExpression e 
-                return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
-                                                                   StringExp -> printBytecode
-                                                                   _ -> errorWithoutStackTrace $ "cant print: " ++ show expressionType)
+  Sequence statements -> 
+    concat <$> traverse codegenStatement statements 
+  Print e -> do 
+    (expressionCode, expressionType) <- codegenExpression e 
+    return $ expressionCode ++ (case expressionType of IntExp -> printIntBytecode
+                                                       StringExp -> printBytecode
+                                                       _ -> errorWithoutStackTrace $ "cant print: " ++ show expressionType)
 
   Assign (Identifier v) e -> do 
     (expressionCode, expressionType) <- codegenExpression e 
@@ -135,94 +130,102 @@ codegenStatement = \case
         
   Assign _ _ -> errorWithoutStackTrace "Invalid lvalue"
 
-  If test ifBody elseBody -> do (testCode, testType) <- codegenExpression test 
-                                when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
+  If test ifBody elseBody -> do 
+    (testCode, testType) <- codegenExpression test 
+    when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
 
-                                ifBodyCode <- codegenStatement ifBody 
-                                elseBodyCode <- codegenStatement elseBody 
+    ifBodyCode <- codegenStatement ifBody 
+    elseBodyCode <- codegenStatement elseBody 
 
-                                return $ testCode ++ [Bipush 0, IfCmpNeq 6, 
-                                                      Goto (3 + bytecodeLength ifBodyCode)] 
-                                                  ++ ifBodyCode 
-                                                  ++ [Goto (3 + bytecodeLength elseBodyCode)]
-                                                  ++ elseBodyCode 
+    return $ testCode ++ [Bipush 0, IfCmpNeq 6, 
+                          Goto (3 + bytecodeLength ifBodyCode)] 
+                      ++ ifBodyCode 
+                      ++ [Goto (3 + bytecodeLength elseBodyCode)]
+                      ++ elseBodyCode 
                                                   
-  While test body -> do (testCode, testType) <- codegenExpression test 
-                        when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
+  While test body -> do 
+    (testCode, testType) <- codegenExpression test 
+    when (testType /= IntExp) (errorWithoutStackTrace "Integer expression required")
 
-                        bodyCode <- codegenStatement body 
+    bodyCode <- codegenStatement body 
 
-                        let code = [Comment "Loop test"] ++ testCode 
-                                                         ++ [Bipush 0, IfCmpNeq 6, 
-                                                             Goto (6 + bytecodeLength bodyCode), 
-                                                             Comment "Loop body"]
-                                                         ++ bodyCode
-                        return $ code ++ [Goto $ negate (bytecodeLength code), Comment "Loop end"]
+    let code = [Comment "Loop test"] ++ testCode 
+                                     ++ [Bipush 0, IfCmpNeq 6, 
+                                         Goto (6 + bytecodeLength bodyCode), 
+                                         Comment "Loop body"]
+                                     ++ bodyCode
+    return $ code ++ [Goto $ negate (bytecodeLength code), Comment "Loop end"]
 
   unsupported -> error $ "Unsupported operation (for now): " ++ show unsupported
 
   where printIntBytecode = [InvokeNative StringFromInt] ++ printBytecode 
         printBytecode = [InvokeNative NativePrint, Pop]   
 
-codegenExpression :: Expression -> State CodegenState ([Bytecode], ExpressionType)
+-- codegenExpression :: Expression -> State CodegenState ([Bytecode], ExpressionType)
+codegenExpression :: CodegenBuilder Expression ([Bytecode], ExpressionType)
 codegenExpression = \case 
-  IntConstant i -> if -128 < i && i < 127 
-                     then return ([Bipush $ fromInteger i], IntExp)
-                     else (,IntExp) <$> updatePool i intPool (pure . Ildc) 
+  IntConstant i -> 
+    if -128 < i && i < 127 
+      then return ([Bipush $ fromInteger i], IntExp)
+      else updatePool i intPool (pure . Ildc) <&> (,IntExp)
 
   StringLiteral str -> codegenString str <&> (,StringExp)
-  Identifier name -> do variablesEnv <- gets $ view variables
-                        let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
-                        return ([VLoad index], variableType)
+  Identifier name -> do 
+    variablesEnv <- gets $ view variables
+    let (index, variableType) = fromMaybe (errorWithoutStackTrace $ "unknown variable: " ++ name) (lookupElemIndex name variablesEnv)
+    return ([VLoad index], variableType)
 
-  ArrayAccess arrayExp indexExp -> do (arrayCode, arrayType) <- codegenExpression arrayExp 
-                                      (indexCode, indexType) <- codegenExpression indexExp 
+  ArrayAccess arrayExp indexExp -> do 
+    (arrayCode, arrayType) <- codegenExpression arrayExp 
+    (indexCode, indexType) <- codegenExpression indexExp 
 
-                                      when (case (arrayType, indexType) of { (ArrayExp _, IntExp) -> False; _ -> True })
-                                        (errorWithoutStackTrace "array expression required or integer subscript required")
+    when (case (arrayType, indexType) of { (ArrayExp _, IntExp) -> False; _ -> True })
+      (errorWithoutStackTrace "array expression required or integer subscript required")
 
-                                      let (ArrayExp t) = arrayType
-                                      return (arrayCode ++ indexCode ++ [AAdds, typeLoadInstruction t], t)
-
+    let (ArrayExp t) = arrayType
+    return (arrayCode ++ indexCode ++ [AAdds, typeLoadInstruction t], t)
 
   FunctionCall funcName funcArgs -> error "TODO: function calls"
   ArrayLiteral [] -> return ([], ArrayExp VoidExp) -- FIXME: Welp looks like we need a HM type system 
-  ArrayLiteral expressions -> do (expressionCodes, expressionTypes) <- unzip <$> traverse codegenExpression expressions 
-                                 when (not $ same expressionTypes) (errorWithoutStackTrace "mixed types in array literal")
-                                 when (length expressions > 127) (errorWithoutStackTrace "array size too big")
+  ArrayLiteral expressions -> do 
+    (expressionCodes, expressionTypes) <- unzip <$> traverse codegenExpression expressions 
+    when (not $ same expressionTypes) (errorWithoutStackTrace "mixed types in array literal")
+    when (length expressions > 127) (errorWithoutStackTrace "array size too big")
 
-                                 -- (arraySizeInstructions, _) <- codegenExpression (IntConstant . fromIntegral $ length expressions)
-                                 -- FIXME: Currently because of bipush the max array literal size is 127 
-                                 -- However this isn't too hard to fix using traverse 
-                                 -- But honestly this entire file needs to be split up 
-                                 let arrayType = head expressionTypes
-                                     allocInstructions = [Bipush $ length expressions, NewArray $ typeSize arrayType]
-                                     elemInstructions = concat $ zipWith (\i e -> [Dup, Bipush i, AAdds] ++ e ++ [typeStoreInstruction arrayType]) [0..] expressionCodes 
-                                 return . (,ArrayExp arrayType) $ (allocInstructions ++ elemInstructions)
+    -- (arraySizeInstructions, _) <- codegenExpression (IntConstant . fromIntegral $ length expressions)
+    -- FIXME: Currently because of bipush the max array literal size is 127 
+    -- However this isn't too hard to fix using traverse 
+    -- But honestly this entire file needs to be split up 
+    let arrayType = head expressionTypes
+        allocInstructions = [Bipush $ length expressions, NewArray $ typeSize arrayType]
+        elemInstructions = concat $ zipWith (\i e -> [Dup, Bipush i, AAdds] ++ e ++ [typeStoreInstruction arrayType]) [0..] expressionCodes 
+    return . (,ArrayExp arrayType) $ (allocInstructions ++ elemInstructions)
 
   UnaryOp Negate (IntConstant i) -> codegenExpression $ IntConstant (-i)
-  UnaryOp operator operand -> do (operandCode, operandType) <- codegenExpression operand 
-                                 when (operandType /= IntExp) (errorWithoutStackTrace "negation or ~ applied to non-integer expression") 
-                                 return . (,IntExp) . (operandCode++) $ case operator of 
-                                                                          BitNot -> [Bipush (-1), IXor]
-                                                                          Negate -> [Bipush (-1), IMul] 
+  UnaryOp operator operand -> do 
+    (operandCode, operandType) <- codegenExpression operand 
+    when (operandType /= IntExp) (errorWithoutStackTrace "negation or ~ applied to non-integer expression") 
+    return . (,IntExp) . (operandCode++) $ case operator of 
+                                             BitNot -> [Bipush (-1), IXor]
+                                             Negate -> [Bipush (-1), IMul] 
 
-  BinOp operator lhs rhs -> do (lhsCode, lhsType) <- codegenExpression lhs 
-                               (rhsCode, rhsType) <- codegenExpression rhs 
-                               
-                               -- when (not $ validateType lhs rhs operator) (error $ "Invalid types")
-                               case (operator, lhsType, rhsType) of 
-                                 (NumericOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [numericOpMap op], IntExp)
-                                 (ComparisonOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ comparisonJumpCode op, IntExp)
-                                 (ComparisonOp op, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ 
-                                                                                    [InvokeNative StringCompare, Bipush 0] ++ 
-                                                                                    comparisonJumpCode op, IntExp)
-                                
-                                 (Plus, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [IAdd], IntExp)
-                                 (Plus, StringExp, IntExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringFromInt, InvokeNative StringJoin], StringExp)
-                                 (Plus, IntExp, StringExp) -> return (lhsCode ++ [InvokeNative StringFromInt] ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
-                                 (Plus, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
-                                 _ -> error $ "Type mismatch in expression: " ++ show (BinOp operator lhs rhs)
+  BinOp operator lhs rhs -> do 
+    (lhsCode, lhsType) <- codegenExpression lhs 
+    (rhsCode, rhsType) <- codegenExpression rhs 
+    
+    -- when (not $ validateType lhs rhs operator) (error $ "Invalid types")
+    case (operator, lhsType, rhsType) of 
+      (NumericOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [numericOpMap op], IntExp)
+      (ComparisonOp op, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ comparisonJumpCode op, IntExp)
+      (ComparisonOp op, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ 
+                                                         [InvokeNative StringCompare, Bipush 0] ++ 
+                                                         comparisonJumpCode op, IntExp)
+     
+      (Plus, IntExp, IntExp) -> return (lhsCode ++ rhsCode ++ [IAdd], IntExp)
+      (Plus, StringExp, IntExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringFromInt, InvokeNative StringJoin], StringExp)
+      (Plus, IntExp, StringExp) -> return (lhsCode ++ [InvokeNative StringFromInt] ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
+      (Plus, StringExp, StringExp) -> return (lhsCode ++ rhsCode ++ [InvokeNative StringJoin], StringExp)
+      _ -> error $ "Type mismatch in expression: " ++ show (BinOp operator lhs rhs)
 
   where numericOpMap = \case 
           Minus -> ISub 
@@ -242,7 +245,7 @@ codegenExpression = \case
 
         comparisonJumpCode op = [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1]
 
-codegenString :: CodegenBuilder String 
+codegenString :: CodegenBuilder String [Bytecode]
 codegenString string = do pool <- gets $ view stringPool
                           let pos = length pool
                               byteString = map (ubyteToHex . ord) string 
@@ -310,40 +313,6 @@ bytecodeMap b = (\case
   InvokeNative func -> "B7 " ++ ushortToHex (fromEnum func) 
   Return -> "B0") b ++ "       \t# " ++ showBytecode b ++ "\n" 
 
-showBytecode :: Bytecode -> String  
-showBytecode = \case 
-  Comment s -> s 
-  other -> show other 
-
-bytecodeLength :: [Bytecode] -> Int 
-bytecodeLength = sum . map bytecodeArity
-
--- FIXME: merge this with bytecodeMap 
-bytecodeArity :: Bytecode -> Int 
-bytecodeArity = \case 
-  Ildc _ -> 3 
-  Aldc _ -> 3
- 
-  InvokeNative _ -> 3 
- 
-  Goto _ -> 3
-  IfCmpEq _ -> 3
-  IfCmpNeq _ -> 3 
-  IfCmpLt _ -> 3
-  IfCmpGt _ -> 3 
-  IfCmpLe _ -> 3 
-  IfCmpGe _ -> 3 
-
-  VLoad _ -> 2
-  VStore _ -> 2 
-  Bipush _ -> 2
-
-  NewArray _ -> 2 -- FIXME: veritfy this value 
-
-  Comment _ -> 0 
-
-  _ -> 1 -- most instructions do not take operands 
-
 -- | Size in bytes for a given type 
 typeSize :: ExpressionType -> Int 
 typeSize = \case 
@@ -359,12 +328,6 @@ typeLoadInstruction = \case
 typeStoreInstruction = \case 
   IntExp -> IMStore 
   _ -> AMStore
-
-data NativeFunction = StringFromInt 
-                    | StringJoin
-                    | StringCompare
-                    | NativePrint 
-                        deriving (Enum, Bounded, Show)
 
 header, footer :: String 
 header = "C0 C0 FF EE 00 13 # header\n" 

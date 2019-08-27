@@ -10,6 +10,7 @@ import System.FilePath (replaceExtension)
 import Control.Monad (when)
 
 data Flag = Help | DumpAst | DumpState deriving (Show, Eq) 
+
 main :: IO () 
 main = do 
   args <- getArgs 
@@ -31,13 +32,16 @@ main = do
                     Option ['s'] ["dump-state"] (NoArg DumpState) "prints out the final codegen state" ]
 
         compileFile :: [Flag] -> FilePath -> IO () 
-        compileFile flags fileName = do ast <- maybeGetProgram <$> readFile fileName  
-                                        case ast of 
-                                          Left parseError -> do putStrLn $ "Parsing '" ++ fileName ++ "' failed."
-                                                                print parseError 
-                                          Right ast -> do when (DumpAst `elem` flags) (print ast)
-                                                          let code = codegen ast 
-                                                              outfile = replaceExtension fileName "bc0"
-                                                          writeFile outfile code 
+        compileFile flags fileName = do 
+          ast <- maybeGetProgram <$> readFile fileName  
+          case ast of 
+            Left parseError -> do 
+              putStrLn $ "Parsing '" ++ fileName ++ "' failed."
+              print parseError 
+            Right ast -> do 
+              when (DumpAst `elem` flags) (print ast)
+              let code = codegen ast 
+                  outfile = replaceExtension fileName "bc0"
+              writeFile outfile code 
                                                           
                                                           

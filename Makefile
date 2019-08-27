@@ -7,7 +7,7 @@ SOURCE = $(shell find src/ -name "*.hs")
 
 EXECUTABLE = ibc0 
 
-all: $(EXECUTABLE) 
+all: $(EXECUTABLE) doc 
 
 $(EXECUTABLE): $(SOURCE)
 	$(GHC) $(GHCFLAGS) $(GHCBUILDFLAGS) src/Main.hs -o $(EXECUTABLE)

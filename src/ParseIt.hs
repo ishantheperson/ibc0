@@ -17,7 +17,7 @@ instance CompilationError ParseError where
   getStage = const "Parsing" 
 
 -- Public API 
--- | Returns either   one r error or an AST
+-- | Returns either one error or an AST
 maybeGetProgram :: String -> Either ParseError Statement
 maybeGetProgram = parse program "" 
 
@@ -126,7 +126,6 @@ term =  parens expression
     <|> StringLiteral <$> stringLiteral
     <|> (reserved "true" >> return (IntConstant 1))
     <|> (reserved "false" >> return (IntConstant 0))
-    -- <?> "expression"
 
 arrayLiteral = brackets $ commaSep expression 
 

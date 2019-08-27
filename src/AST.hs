@@ -16,7 +16,7 @@ data Statement = Sequence [Statement]
 data LValue = VariableL String  
             | ArrayL LValue Expression 
                 deriving Show
--}
+-}  
 
 data Expression = -- Terms
                   IntConstant Integer | StringLiteral String | Identifier String 
@@ -31,7 +31,11 @@ data Expression = -- Terms
 data BinOperator = Plus | NumericOp NumericOperator | ComparisonOp ComparisonOperator deriving Show 
 data NumericOperator = Minus | Multiply | Mod | Divide | And | Or deriving Show 
 data ComparisonOperator = Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual deriving Show 
-data UnaryOperator = Negate | BitNot deriving Show
+data UnaryOperator = 
+    -- | Integer negation e.g. -1
+    Negate 
+    -- | Bitwise negation e.g. ~0x33
+  | BitNot deriving Show
 
 -- TODO: nicer Show instances 
 {-
@@ -44,4 +48,19 @@ instance Show Expression where
     ArrayAccess arr i -> (show arr) ++ "[" ++ show i ++ "]"
     BinOp op lhs rhs -> lhs ++ " " ++ show op ++ " " ++ rhs 
     UnaryOp -> show UnaryOp ++ show Expression
+-}
+
+{-
+instance Show NumericOperator where 
+  show = \case 
+    Minus -> "-"
+    Multiply -> "*"
+    Mod -> "%"
+    Divide -> "/"
+    And -> "&"
+    Or -> "|"
+
+instance Show ComparisonOperator where 
+  show = \case 
+
 -}
