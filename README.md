@@ -2,7 +2,7 @@
 
 A work-in-progress compiler for a language which targets BC0.
 
-Current feature in development is [arrays](https://github.com/ishantheperson/ibc0/tree/arrays)
+Arrays were just added. 
 
 ### Dependencies
 
@@ -21,13 +21,14 @@ Simply compile with `make`.
 This consists of an executable named `ibc0`. There was an interpreter/REPL
 but these have been removed in order to focus on the code generator.
 
-The BC0 generator is run by passing the `-b` flag to `ibc0`, followed by file names.
+There are some additional options visible through `-h`/`--help` 
+
 ```sh
 % ls 
 conditional_test.txt
 string_test.txt
 
-% ibc0 -b *.txt
+% ibc0 *.txt
 
 % ls 
 conditional_test.bc0

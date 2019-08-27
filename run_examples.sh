@@ -34,7 +34,7 @@ fi
 
 for f in examples/*.txt; do 
   echo "Compiling '$f'..."
-  ./$IBC0 -b $f 
+  ./$IBC0 $f 
   echo  
 done 
 
