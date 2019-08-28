@@ -10,11 +10,16 @@ import ParseIt
 
 import Data.Char (ord)
 import Data.Maybe (fromMaybe)
+import Data.Function ((&))
 import Data.Functor ((<&>))
 
+import Data.DList (DList)
+import qualified Data.DList as DList
+
 import Control.Lens
--- import Control.Arrow ((>>>))
+import Control.Arrow ((>>>))
 import Control.Monad.State 
+import Control.Monad.Writer.Strict 
 
 import System.FilePath (replaceExtension)
 
@@ -64,11 +69,14 @@ emptyState = CodegenState [] [] []
    2 bytes - native pool count 
    native pool -}
 
-   {-
+
 data CodegenError = UnknownVariable String -- TODO: add error handling through writerT monad transformer
+instance Show CodegenError where 
+  show = \case 
+    UnknownVariable v -> "Unknown variable: " ++ v 
+
 instance CompilationError CodegenError where 
-  getStage = const "Codegeneration"
--}
+  getStage = const "Code generation"
 
 -- | Compiles a source file to bytecode
 -- | The output file is the same as the input file name, except 
@@ -84,7 +92,7 @@ getBytecode = codegen . getProgram
 
 -- | Generates bytecode string from an AST node
 codegen :: Statement -> String 
-codegen p = let (bytecode, pools) = runState (codegenStatement p) emptyState 
+codegen p = let (errors, (bytecode, pools)) = runCodegenBuilder codegenStatement p emptyState 
                 intPoolBytes = codegenIntPool (view intPool pools)
                 stringPoolBytes = codegenStringPool (view stringPool pools)
                 mainBytes = codegenMain (view variables pools) bytecode
@@ -97,7 +105,11 @@ codegen p = let (bytecode, pools) = runState (codegenStatement p) emptyState
                         footer] 
 
 -- type CodegenBuilder a = a -> State CodegenState [Bytecode]
-type CodegenBuilder a b = a -> State CodegenState b 
+-- type CodegenBuilder a b = a -> State CodegenState b 
+type CodegenBuilder a b = a -> WriterT [CodegenError] (State CodegenState) b
+-- runCodegenBuilder :: (CodegenBuilder a b) -> a -> CodegenState -> (DList CodegenError, (CodegenState, b))
+-- runCodegenBuilder f x = runWriterT (f x) >>> runState 
+runCodegenBuilder = undefined 
 
 codegenStatement :: CodegenBuilder Statement [Bytecode]
 codegenStatement = \case 
@@ -111,7 +123,7 @@ codegenStatement = \case
 
   Assign (Identifier v) e -> do 
     (expressionCode, expressionType) <- codegenExpression e 
-    instruction <- updatePool (v, expressionType) variables (pure . VStore)
+    instruction <- lift $ updatePool (v, expressionType) variables (pure . VStore)
     return $ expressionCode ++ instruction
 
   Assign (ArrayAccess array index) e -> do 
@@ -167,7 +179,7 @@ codegenExpression = \case
   IntConstant i -> 
     if -128 < i && i < 127 
       then return ([Bipush $ fromInteger i], IntExp)
-      else updatePool i intPool (pure . Ildc) <&> (,IntExp)
+      else lift $ updatePool i intPool (pure . Ildc) <&> (,IntExp)
 
   StringLiteral str -> codegenString str <&> (,StringExp)
   Identifier name -> do 
@@ -246,7 +258,7 @@ codegenExpression = \case
         comparisonJumpCode op = [numericComparisonMap op 8, Bipush 0, Goto 5, Bipush 1]
 
 codegenString :: CodegenBuilder String [Bytecode]
-codegenString string = do pool <- gets $ view stringPool
+codegenString string = do pool <- lift . gets $ view stringPool
                           let pos = length pool
                               byteString = map (ubyteToHex . ord) string 
                           modify (over stringPool (++(byteString ++ ["00"]))) 
